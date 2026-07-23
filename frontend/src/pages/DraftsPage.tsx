@@ -59,14 +59,14 @@ export function DraftsPage() {
   ];
   return (
     <div className="page">
-      <PageHeader title="草稿审核" description="查看由结构化观点提取结果生成的第一阶段最小草稿。" />
+      <PageHeader title="草稿审核" description="审核总结文章、段落来源、质量结果和手动图片 Prompt 工作流。" />
       <section className="work-surface">
         {query.isLoading && <LoadingBlock rows={9} />}
         {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
         {query.data?.total === 0 && (
           <EmptyState
             title="还没有待审核草稿"
-            description="问题任务完成结构化观点提取后，会自动生成可编辑的第一阶段最小草稿。"
+            description="问题完成回答采集、观点聚类、文章生成和独立审核后，会自动进入这里。"
           />
         )}
         {query.data && query.data.total > 0 && (
@@ -81,4 +81,3 @@ export function DraftsPage() {
     </div>
   );
 }
-

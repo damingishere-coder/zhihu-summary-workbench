@@ -28,6 +28,21 @@ import { StatusTag } from "../components/StatusTag";
 import type { Task } from "../types";
 import { formatDateTime, formatDuration, truncateId } from "../utils/format";
 
+const cancellableStatuses = [
+  "queued",
+  "fetching_question",
+  "fetching_answers",
+  "cleaning_answers",
+  "evaluating_answers",
+  "extracting_claims",
+  "generating_embeddings",
+  "clustering_claims",
+  "refining_clusters",
+  "generating_opinion_map",
+  "generating_article",
+  "reviewing_article",
+];
+
 export function TasksPage() {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
@@ -44,7 +59,7 @@ export function TasksPage() {
     queryFn: () => api.task(selectedId!),
     enabled: Boolean(selectedId),
     refetchInterval: (query) =>
-      ["queued", "extracting_claims"].includes(query.state.data?.status ?? "") ? 2_000 : false,
+      cancellableStatuses.includes(query.state.data?.status ?? "") ? 2_000 : false,
   });
   const filtered = useMemo(
     () =>
@@ -84,7 +99,7 @@ export function TasksPage() {
       render: (_: unknown, task: Task) => (
         <button className="table-link table-title" onClick={() => setSelectedId(task.id)}>
           <span>{task.question_title}</span>
-          <small>任务 {truncateId(task.id)} · 观点提取</small>
+          <small>任务 {truncateId(task.id)} · 内容生产流水线</small>
         </button>
       ),
     },
@@ -157,13 +172,13 @@ export function TasksPage() {
               onClick={() => retry.mutate(task.id)}
             />
           </Tooltip>
-          <Tooltip title={["queued", "extracting_claims"].includes(task.status) ? "取消任务" : "当前状态不能取消"}>
+          <Tooltip title={cancellableStatuses.includes(task.status) ? "取消任务" : "当前状态不能取消"}>
             <Button
               type="text"
               danger
               aria-label="取消任务"
               icon={<CloseCircleOutlined />}
-              disabled={!["queued", "extracting_claims"].includes(task.status)}
+              disabled={!cancellableStatuses.includes(task.status)}
               onClick={() =>
                 modal.confirm({
                   title: "确认取消任务？",
@@ -193,7 +208,10 @@ export function TasksPage() {
             options={[
               { value: "", label: "状态：全部" },
               { value: "queued", label: "队列中" },
+              { value: "fetching_answers", label: "采集回答" },
               { value: "extracting_claims", label: "观点提取" },
+              { value: "refining_clusters", label: "聚类修正" },
+              { value: "generating_article", label: "生成文章" },
               { value: "waiting_review", label: "待审核" },
               { value: "failed", label: "失败" },
               { value: "cancelled", label: "已取消" },

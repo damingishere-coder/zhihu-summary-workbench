@@ -75,7 +75,7 @@ export function SettingsPage({
 
   return (
     <div className="page page--settings">
-      <PageHeader title="设置" description="管理非敏感运行配置、模型角色和第一阶段工作流。" />
+      <PageHeader title="设置" description="管理非敏感运行配置、模型角色、采集和手动图片工作流。" />
       <Segmented
         className="settings-segmented"
         value={section}
@@ -169,7 +169,7 @@ export function SettingsPage({
               description={
                 query.data.deepseek_configured
                   ? "可以切换到真实模式并测试结构化输出。"
-                  : "Mock 模式可完成全部第一阶段测试；如需真实调用，请只在本机 .env 设置 DEEPSEEK_API_KEY。"
+                  : "Mock 模式可完成第二阶段完整文本流水线测试；如需真实调用，请只在本机 .env 设置 DEEPSEEK_API_KEY。"
               }
             />
             <Form

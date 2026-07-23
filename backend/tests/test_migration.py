@@ -35,6 +35,7 @@ def test_alembic_initial_migration_creates_required_tables(tmp_path) -> None:
         "answers",
         "claims",
         "claim_clusters",
+        "opinion_maps",
         "article_drafts",
         "image_versions",
         "task_jobs",
@@ -45,4 +46,3 @@ def test_alembic_initial_migration_creates_required_tables(tmp_path) -> None:
         "prompt_versions",
     }
     assert required.issubset(tables)
-

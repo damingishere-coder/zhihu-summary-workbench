@@ -30,6 +30,7 @@ class ImageDraft(Base, UuidPrimaryKeyMixin, TimestampMixin):
     )
     status: Mapped[str] = mapped_column(String(64), default="draft")
     current_version: Mapped[int] = mapped_column(Integer, default=1)
+    use_css_background: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class ImageVersion(Base, UuidPrimaryKeyMixin):
@@ -45,6 +46,14 @@ class ImageVersion(Base, UuidPrimaryKeyMixin):
     prompt_en: Mapped[str] = mapped_column(Text, default="")
     background_path: Mapped[str | None] = mapped_column(String(1000))
     rendered_path: Mapped[str | None] = mapped_column(String(1000))
+    workflow_mode: Mapped[str] = mapped_column(
+        String(64), default="copy_prompt_and_upload"
+    )
+    copy_state: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    uploaded_name: Mapped[str | None] = mapped_column(String(500))
+    content_type: Mapped[str | None] = mapped_column(String(128))
+    byte_size: Mapped[int] = mapped_column(Integer, default=0)
+    background_deleted: Mapped[bool] = mapped_column(Boolean, default=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now
     )
@@ -86,4 +95,3 @@ class BrowserSession(Base, UuidPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(32), default="unknown")
     profile_reference: Mapped[str] = mapped_column(String(500), default="")
     last_error: Mapped[str | None] = mapped_column(Text)
-

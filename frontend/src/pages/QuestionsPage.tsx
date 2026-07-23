@@ -1,6 +1,7 @@
 import {
   DeleteOutlined,
   EyeOutlined,
+  FireOutlined,
   MoreOutlined,
   PlayCircleOutlined,
   SearchOutlined,
@@ -89,6 +90,19 @@ export function QuestionsPage() {
     mutationFn: api.deleteQuestion,
     onSuccess: async () => {
       message.success("问题已删除");
+      await refresh();
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const hotMutation = useMutation({
+    mutationFn: () =>
+      api.fetchHotQuestions({ limit: 20, collector_mode: "auto" }),
+    onSuccess: async (result) => {
+      message.success(
+        `热榜同步完成：新增 ${result.created} 条，更新 ${result.updated} 条`,
+      );
+      result.warnings.forEach((warning) => message.warning(warning));
+      setSource("hot");
       await refresh();
     },
     onError: (error) => message.error(error.message),
@@ -216,7 +230,14 @@ export function QuestionsPage() {
         title="问题池"
         description="管理热门问题、手动推荐和已进入处理流程的问题。"
         actions={
-          <Space>
+          <Space wrap>
+            <Button
+              icon={<FireOutlined />}
+              loading={hotMutation.isPending}
+              onClick={() => hotMutation.mutate()}
+            >
+              同步知乎热榜
+            </Button>
             <AddQuestionButton onClick={() => setAddOpen(true)} />
             <ImportQuestionsButton onClick={() => setImportOpen(true)} />
           </Space>

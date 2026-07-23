@@ -69,6 +69,11 @@ class QuestionRead(BaseModel):
     source: str
     status: str
     priority: str
+    hot_rank: int | None
+    hot_score: str
+    answer_count: int
+    follower_count: int
+    fetched_at: datetime | None
     created_at: datetime
     updated_at: datetime
 
@@ -95,4 +100,3 @@ class QuestionImportResponse(BaseModel):
 class QuestionDetail(QuestionRead):
     latest_task_id: str | None = None
     latest_draft_id: str | None = None
-

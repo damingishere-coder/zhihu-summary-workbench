@@ -65,7 +65,7 @@ export function AddQuestionModal({
       destroyOnHidden
     >
       <p className="modal-intro">
-        第一阶段会保存问题，并用示例回答验证结构化观点提取。不会自动访问知乎或保存账号信息。
+        保存后可启动完整采集与分析任务。系统只使用正常可见页面和用户本地已登录会话，不保存账号密码。
       </p>
       <Form
         form={form}
@@ -107,7 +107,7 @@ export function AddQuestionModal({
         </Form.Item>
         <Form.Item
           name="sample_answer"
-          label="示例回答（第一阶段流程验证）"
+          label="示例回答（可选，仅作问题补充说明）"
           extra="Worker 会从这里提取观点；真实回答采集将在第二阶段实现。"
         >
           <Input.TextArea

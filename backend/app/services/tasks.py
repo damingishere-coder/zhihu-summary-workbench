@@ -7,22 +7,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from backend.app.ai.providers.base import ProviderError
-from backend.app.ai.providers.factory import create_structured_provider
-from backend.app.ai.services.claim_extractor import ClaimExtractionService
+from backend.app.collectors.zhihu import ZhihuCollector
 from backend.app.core.config import Settings
 from backend.app.core.state_machine import assert_task_transition
 from backend.app.models.common import utc_now
-from backend.app.models.core import (
-    ArticleDraft,
-    ArticleVersion,
-    ModelUsageLog,
-    Question,
-    TaskJob,
-    TaskLog,
+from backend.app.models.core import Question, TaskJob, TaskLog
+from backend.app.schemas.analysis import FetchAnswersRequest
+from backend.app.services.content_pipeline import (
+    evaluate_answers,
+    extract_claims,
+    fetch_and_store_answers,
+    generate_article,
+    generate_embeddings,
+    generate_opinion_map,
+    refine_clusters,
+    review_article,
+    usage_summary,
 )
 from backend.app.services.queue import QueueBroker
-from backend.app.services.settings import configured_settings_copy, provider_mode
 
 
 logger = logging.getLogger(__name__)
@@ -71,7 +73,9 @@ async def create_task(
     active = await session.scalar(
         select(TaskJob).where(
             TaskJob.question_id == question.id,
-            TaskJob.status.in_(["queued", "extracting_claims"]),
+            TaskJob.status.not_in(
+                ["waiting_review", "review_approved", "failed", "cancelled"]
+            ),
         )
     )
     if active:
@@ -79,11 +83,16 @@ async def create_task(
 
     task = TaskJob(
         question_id=question.id,
+        task_type="question_content_pipeline",
         status="queued",
         stage="queued",
         progress=0,
         max_retries=settings.task_max_retries,
-        payload={"sample_answer_supplied": bool(question.sample_answer)},
+        payload={
+            "fetch_mode": "representative",
+            "collector_mode": "auto",
+            "max_answers": settings.max_answers_per_question,
+        },
     )
     question.status = "queued"
     session.add(task)
@@ -143,7 +152,7 @@ async def retry_task(
 async def cancel_task(
     session: AsyncSession, broker: QueueBroker, task: TaskJob
 ) -> TaskJob:
-    if task.status not in {"queued", "extracting_claims"}:
+    if task.status in {"waiting_review", "review_approved", "failed", "cancelled"}:
         raise ValueError("当前任务状态不能取消")
     task.cancel_requested = True
     if task.status == "queued":
@@ -195,19 +204,29 @@ async def _set_progress(
     await publish_task_state(broker, task)
 
 
-def _build_minimal_draft(question: Question, analysis: dict[str, object]) -> str:
-    claims = analysis.get("core_claims", [])
-    reasons = analysis.get("supporting_reasons", [])
-    claim_lines = "\n".join(f"- {item}" for item in claims)
-    reason_lines = "\n".join(f"- {item}" for item in reasons) or "- 暂无额外理由"
-    return (
-        f"# {question.title}\n\n"
-        f"## 一句话概览\n\n{analysis.get('summary', '')}\n\n"
-        f"## 初步观点\n\n{claim_lines}\n\n"
-        f"## 支持理由\n\n{reason_lines}\n\n"
-        "> 第一阶段最小草稿：由结构化观点提取结果生成，必须人工审核；"
-        "真实回答采集、观点聚类和正式文章生成将在第二阶段完成。"
+async def _stop_if_cancelled(
+    session: AsyncSession,
+    broker: QueueBroker,
+    task: TaskJob,
+) -> bool:
+    await session.refresh(task)
+    if not task.cancel_requested:
+        return False
+    assert_task_transition(task.status, "cancelled")
+    task.status = "cancelled"
+    task.stage = "cancelled"
+    task.completed_at = utc_now()
+    task.question.status = "candidate"
+    await add_task_log(
+        session,
+        task,
+        stage="cancelled",
+        message="已按用户请求在当前阶段结束后停止，已有数据和历史版本已保留",
+        level="warning",
     )
+    await session.commit()
+    await publish_task_state(broker, task)
+    return True
 
 
 async def process_task(
@@ -217,6 +236,7 @@ async def process_task(
     settings: Settings,
     broker: QueueBroker,
     session_factory: async_sessionmaker[AsyncSession],
+    collector: ZhihuCollector | None = None,
 ) -> None:
     async with session_factory() as session:
         task = await _load_task(session, task_id)
@@ -226,116 +246,219 @@ async def process_task(
             await cancel_task(session, broker, task)
             return
 
-        assert_task_transition(task.status, "extracting_claims")
-        task.status = "extracting_claims"
-        task.stage = "preparing_input"
-        task.progress = 10
+        assert_task_transition(task.status, "fetching_question")
+        task.status = "fetching_question"
+        task.stage = "fetching_question"
+        task.progress = 5
         task.worker_id = worker_id
         task.started_at = utc_now()
-        task.question.status = "extracting_claims"
+        task.question.status = "fetching_question"
         await add_task_log(
             session,
             task,
-            stage="preparing_input",
-            message="Worker 已领取任务，正在准备结构化输入",
+            stage="fetching_question",
+            message="Worker 已领取任务，开始读取知乎问题信息",
         )
         await session.commit()
         await publish_task_state(broker, task)
 
         try:
-            mode = await provider_mode(session, settings)
-            runtime_settings = await configured_settings_copy(session, settings)
-            provider = create_structured_provider(mode, runtime_settings)
-            service = ClaimExtractionService(provider)
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="fetching_answers",
+                progress=10,
+                message="正在分页采集回答；登录或验证码阻断时会安全暂停",
+            )
+            assert_task_transition(task.status, "fetching_answers")
+            task.status = "fetching_answers"
+            task.question.status = "fetching_answers"
+            await session.commit()
+            fetch_result, fetch_counts = await fetch_and_store_answers(
+                session,
+                task.question,
+                settings,
+                FetchAnswersRequest(
+                    mode=str(task.payload.get("fetch_mode", "representative")),
+                    collector_mode=str(
+                        task.payload.get("collector_mode", "auto")
+                    ),
+                    max_answers=int(
+                        task.payload.get(
+                            "max_answers", settings.max_answers_per_question
+                        )
+                    ),
+                ),
+                collector=collector,
+            )
+            if fetch_counts["included"] < 1:
+                raise ValueError("没有采集到可分析的有效回答")
+            assert_task_transition(task.status, "cleaning_answers")
+            task.status = "cleaning_answers"
+            task.question.status = "cleaning_answers"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="cleaning_answers",
+                progress=20,
+                message=(
+                    f"采集 {fetch_counts['fetched']} 条回答，"
+                    f"基础过滤后 {fetch_counts['included']} 条可分析"
+                ),
+            )
+
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "evaluating_answers")
+            task.status = "evaluating_answers"
+            task.question.status = "evaluating_answers"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="evaluating_answers",
+                progress=30,
+                message="正在批量筛选回答质量和相关性",
+            )
+            quality_counts = await evaluate_answers(
+                session, task.question, settings, task=task
+            )
+            if quality_counts["included"] < 1:
+                raise ValueError("质量筛选后没有可分析回答")
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "extracting_claims")
+            task.status = "extracting_claims"
+            task.question.status = "extracting_claims"
             await _set_progress(
                 session,
                 broker,
                 task,
                 stage="extracting_claims",
-                progress=35,
-                message=f"正在使用 {mode} Provider 提取观点",
+                progress=42,
+                message="正在分批提取每条回答的观点和适用条件",
             )
-            answer_text = (
-                task.question.sample_answer
-                or task.question.description
-                or task.question.title
+            claim_counts = await extract_claims(
+                session, task.question, settings, task=task
             )
-            result = await service.extract(
-                question_title=task.question.title,
-                answer_text=answer_text,
-            )
-
-            await session.refresh(task)
-            if task.cancel_requested:
-                assert_task_transition(task.status, "cancelled")
-                task.status = "cancelled"
-                task.stage = "cancelled"
-                task.completed_at = utc_now()
-                task.question.status = "candidate"
-                await add_task_log(
-                    session,
-                    task,
-                    stage="cancelled",
-                    message="模型调用结束后已按请求取消任务，结果未写入草稿",
-                    level="warning",
-                )
-                await session.commit()
-                await publish_task_state(broker, task)
+            if await _stop_if_cancelled(session, broker, task):
                 return
 
+            assert_task_transition(task.status, "generating_embeddings")
+            task.status = "generating_embeddings"
+            task.question.status = "generating_embeddings"
             await _set_progress(
                 session,
                 broker,
                 task,
-                stage="saving_result",
-                progress=80,
-                message="结构化输出校验通过，正在保存结果和版本",
+                stage="generating_embeddings",
+                progress=55,
+                message="正在生成观点 Embedding，未变化观点复用缓存",
             )
-            analysis = result.data.model_dump()
-            usage = result.usage
-            session.add(
-                ModelUsageLog(
-                    question_id=task.question_id,
-                    task_id=task.id,
-                    provider=usage.provider,
-                    model_role=usage.model_role,
-                    model=usage.model,
-                    input_tokens=usage.input_tokens,
-                    output_tokens=usage.output_tokens,
-                    estimated_cost=usage.estimated_cost,
-                    duration_ms=usage.duration_ms,
-                    status="success",
-                )
+            embedding_counts = await generate_embeddings(
+                session, task.question, settings
             )
-            draft_content = _build_minimal_draft(task.question, analysis)
-            draft = ArticleDraft(
-                question_id=task.question_id,
-                status="waiting_review",
-                current_version=1,
-                title=f"{task.question.title}｜第一阶段结构化草稿",
-                content=draft_content,
-                analysis_snapshot=analysis,
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "clustering_claims")
+            task.status = "clustering_claims"
+            task.question.status = "clustering_claims"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="clustering_claims",
+                progress=64,
+                message="正在进行余弦相似度粗聚类",
             )
-            session.add(draft)
-            await session.flush()
-            session.add(
-                ArticleVersion(
-                    draft_id=draft.id,
-                    version=1,
-                    title=draft.title,
-                    content=draft.content,
-                    source_task_id=task.id,
-                )
+            assert_task_transition(task.status, "refining_clusters")
+            task.status = "refining_clusters"
+            task.question.status = "refining_clusters"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="refining_clusters",
+                progress=70,
+                message="正在修正观点簇并识别共识、分歧和少数派",
             )
+            cluster_counts = await refine_clusters(
+                session, task.question, settings, task=task
+            )
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "generating_opinion_map")
+            task.status = "generating_opinion_map"
+            task.question.status = "generating_opinion_map"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="generating_opinion_map",
+                progress=78,
+                message="正在生成可追溯的观点地图",
+            )
+            opinion = await generate_opinion_map(
+                session, task.question, settings, task=task
+            )
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "generating_article")
+            task.status = "generating_article"
+            task.question.status = "generating_article"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="generating_article",
+                progress=86,
+                message="正在生成总结文章和段落来源映射",
+            )
+            draft, article = await generate_article(
+                session, task.question, settings, task=task
+            )
+            if await _stop_if_cancelled(session, broker, task):
+                return
+
+            assert_task_transition(task.status, "reviewing_article")
+            task.status = "reviewing_article"
+            task.question.status = "reviewing_article"
+            await _set_progress(
+                session,
+                broker,
+                task,
+                stage="reviewing_article",
+                progress=94,
+                message="正在执行独立质量审核",
+            )
+            review = await review_article(
+                session, task.question, draft, settings, task=task
+            )
+
             assert_task_transition(task.status, "waiting_review")
             task.status = "waiting_review"
             task.stage = "waiting_review"
             task.progress = 100
             task.result = {
-                "analysis": analysis,
                 "draft_id": draft.id,
-                "provider": usage.provider,
-                "model": usage.model,
+                "fetch": fetch_counts,
+                "collector_mode": fetch_result.collector_mode,
+                "warnings": fetch_result.warnings,
+                "quality": quality_counts,
+                "claims": claim_counts,
+                "embeddings": embedding_counts,
+                "clusters": cluster_counts,
+                "opinion_map_version": opinion.version,
+                "article_characters": len(article.content),
+                "review": review.model_dump(),
+                "usage": await usage_summary(session, task.question_id),
             }
             task.completed_at = utc_now()
             task.question.status = "waiting_review"
@@ -343,7 +466,7 @@ async def process_task(
                 session,
                 task,
                 stage="waiting_review",
-                message="观点提取完成，最小草稿已进入人工审核",
+                message="第二阶段内容流水线完成，文章和图片 Prompt 工作区已进入草稿审核",
             )
             await session.commit()
             await publish_task_state(broker, task)
@@ -367,4 +490,3 @@ async def process_task(
             )
             await session.commit()
             await publish_task_state(broker, task)
-

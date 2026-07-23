@@ -21,6 +21,8 @@ coverage/
 data/
 logs/
 artifacts/runtime/
+artifacts/ui/draft-review-1280.png
+artifacts/ui/phase2-reference-comparison.png
 
 # Browser and credentials
 .auth/
@@ -35,4 +37,3 @@ playwright/.cache/
 .vscode/
 .DS_Store
 Thumbs.db
-

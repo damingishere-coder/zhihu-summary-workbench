@@ -7,6 +7,7 @@ from backend.app.models.content import (
     ClaimCluster,
     ClaimEmbedding,
     ClusterAnswerLink,
+    OpinionMap,
     QuestionScore,
 )
 from backend.app.models.core import (
@@ -51,6 +52,7 @@ __all__ = [
     "ImageTemplate",
     "ImageVersion",
     "ModelUsageLog",
+    "OpinionMap",
     "OpenSourceReference",
     "PromptTemplate",
     "PromptVersion",
@@ -63,4 +65,3 @@ __all__ = [
     "TaskJob",
     "TaskLog",
 ]
-

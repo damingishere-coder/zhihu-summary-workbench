@@ -129,7 +129,9 @@ export function DashboardPage() {
                   options={[
                     { value: "", label: "状态：全部" },
                     { value: "queued", label: "队列中" },
+                    { value: "fetching_answers", label: "采集回答" },
                     { value: "extracting_claims", label: "观点提取" },
+                    { value: "generating_article", label: "生成文章" },
                     { value: "waiting_review", label: "待审核" },
                     { value: "failed", label: "失败" },
                   ]}

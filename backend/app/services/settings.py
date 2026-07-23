@@ -128,6 +128,6 @@ async def configured_settings_copy(
             "deepseek_fallback_model": current.fallback_text_model,
             "embedding_model": current.embedding_model,
             "ai_request_timeout_seconds": current.request_timeout_seconds,
+            "zhihu_browser_user_data_dir": current.browser_user_data_dir,
         }
     )
-

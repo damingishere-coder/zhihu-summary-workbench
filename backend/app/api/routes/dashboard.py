@@ -22,6 +22,20 @@ from backend.app.services.settings import provider_mode
 
 
 router = APIRouter(prefix="/dashboard", tags=["dashboard"])
+PROCESSING_STATUSES = [
+    "queued",
+    "fetching_question",
+    "fetching_answers",
+    "cleaning_answers",
+    "evaluating_answers",
+    "extracting_claims",
+    "generating_embeddings",
+    "clustering_claims",
+    "refining_clusters",
+    "generating_opinion_map",
+    "generating_article",
+    "reviewing_article",
+]
 
 
 @router.get("/summary", response_model=DashboardSummary)
@@ -34,7 +48,7 @@ async def dashboard_summary(
         (
             await session.scalar(
                 select(func.count(TaskJob.id)).where(
-                    TaskJob.status.in_(["queued", "extracting_claims"])
+                    TaskJob.status.in_(PROCESSING_STATUSES)
                 )
             )
         )
@@ -105,4 +119,3 @@ async def dashboard_summary(
         recent_tasks=[task_to_read(item) for item in recent_tasks],
         recent_logs=recent_logs,
     )
-

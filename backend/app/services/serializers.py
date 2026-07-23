@@ -33,7 +33,11 @@ def task_to_read(task: TaskJob, *, include_logs: bool = False) -> TaskRead:
     )
 
 
-def draft_to_read(draft: ArticleDraft) -> DraftRead:
+def draft_to_read(
+    draft: ArticleDraft,
+    *,
+    paragraph_sources: list[dict[str, object]] | None = None,
+) -> DraftRead:
     return DraftRead(
         id=draft.id,
         question_id=draft.question_id,
@@ -43,7 +47,9 @@ def draft_to_read(draft: ArticleDraft) -> DraftRead:
         title=draft.title,
         content=draft.content,
         analysis_snapshot=draft.analysis_snapshot,
+        review_result=draft.review_result or {},
+        reviewed_at=draft.reviewed_at,
+        paragraph_sources=paragraph_sources or [],
         created_at=draft.created_at,
         updated_at=draft.updated_at,
     )
-

@@ -10,6 +10,11 @@ export interface Question {
   source: string;
   status: string;
   priority: Priority;
+  hot_rank: number | null;
+  hot_score: string;
+  answer_count: number;
+  follower_count: number;
+  fetched_at: string | null;
   created_at: string;
   updated_at: string;
   latest_task_id?: string | null;
@@ -51,6 +56,16 @@ export interface Task {
     draft_id?: string;
     provider?: string;
     model?: string;
+    fetch?: Record<string, number>;
+    quality?: Record<string, number>;
+    claims?: Record<string, number>;
+    embeddings?: Record<string, number>;
+    clusters?: Record<string, number>;
+    collector_mode?: string;
+    warnings?: string[];
+    article_characters?: number;
+    review?: ArticleQualityReview;
+    usage?: ModelUsageSummary;
   };
   error_message: string | null;
   cancel_requested: boolean;
@@ -69,9 +84,192 @@ export interface Draft {
   current_version: number;
   title: string;
   content: string;
-  analysis_snapshot: ClaimAnalysis;
+  analysis_snapshot: Record<string, unknown> & {
+    opinion_map?: OpinionMap;
+    answer_count?: number;
+    cluster_count?: number;
+    core_claims?: string[];
+    quality_score?: number;
+    relevance_score?: number;
+  };
+  review_result: ArticleQualityReview | Record<string, never>;
+  reviewed_at: string | null;
+  paragraph_sources: ParagraphSource[];
   created_at: string;
   updated_at: string;
+}
+
+export interface Answer {
+  id: string;
+  question_id: string;
+  answer_external_id: string;
+  author_name: string;
+  author_url: string;
+  answer_url: string;
+  markdown_content: string;
+  plain_content: string;
+  vote_count: number;
+  comment_count: number;
+  published_at: string | null;
+  external_updated_at: string | null;
+  sort_order: number;
+  media_json: {
+    images?: string[];
+    videos?: string[];
+    formulas?: string[];
+  };
+  fetch_batch: string;
+  included_for_analysis: boolean;
+  filter_reason: string;
+  created_at: string;
+  updated_at: string;
+  analysis: null | {
+    summary?: string;
+    core_claims?: string[];
+    quality_score?: number;
+    relevance_score?: number;
+    information_density?: number;
+    include?: boolean;
+    reason?: string;
+  };
+}
+
+export interface AnswerList {
+  items: Answer[];
+  total: number;
+  included: number;
+  filtered: number;
+}
+
+export interface OpinionMap {
+  question_summary: string;
+  one_sentence_answer: string;
+  main_dimensions: string[];
+  main_consensus: string[];
+  main_disagreements: string[];
+  minority_but_valuable_views: string[];
+  common_misunderstandings: string[];
+  applicable_conditions: string[];
+  risks: string[];
+  practical_suggestions: string[];
+  source_answer_ids: string[];
+}
+
+export interface ClaimCluster {
+  id: string;
+  question_id: string;
+  name: string;
+  summary: string;
+  cluster_type: string;
+  confidence: number;
+  support_count: number;
+  opposing_reasons: string[];
+  applicable_conditions: string[];
+  is_mainstream: boolean;
+  is_minority: boolean;
+  is_controversial: boolean;
+  information_gain: number;
+  sort_order: number;
+  write_policy: "auto" | "force" | "exclude";
+  source_answer_ids: string[];
+  claim_ids: string[];
+  sources: Array<{
+    answer_id: string;
+    author_name: string;
+    answer_url: string;
+    excerpt: string;
+  }>;
+}
+
+export interface HotQuestionFetchResult {
+  fetched: number;
+  created: number;
+  updated: number;
+  collector_mode: string;
+  warnings: string[];
+}
+
+export interface ModelUsageSummary {
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  duration_ms: number;
+}
+
+export interface AnalysisOverview {
+  question_id: string;
+  answers_total: number;
+  answers_included: number;
+  clusters: ClaimCluster[];
+  opinion_map: OpinionMap | null;
+  opinion_map_version: number | null;
+  model_usage: ModelUsageSummary;
+  latest_draft_id: string | null;
+}
+
+export interface ArticleQualityReview {
+  passed: boolean;
+  score: number;
+  checks: Record<string, boolean>;
+  issues: string[];
+  risk_level: "normal" | "high";
+  requires_human_review: boolean;
+  summary: string;
+}
+
+export interface ParagraphSource {
+  paragraph_id: string;
+  answer_id: string | null;
+  answer_author: string | null;
+  answer_url: string | null;
+  answer_excerpt: string | null;
+  cluster_id: string | null;
+  cluster_name: string | null;
+}
+
+export interface ImageVersion {
+  id: string;
+  version: number;
+  content_json: {
+    title?: string;
+    one_line_conclusion?: string;
+    consensus?: Array<{ title: string; description: string }>;
+    disagreements?: string[];
+    conditions?: string[];
+    suggestions?: string[];
+    suggested_size?: string;
+    aspect_ratio?: string;
+    negative_constraints?: string[];
+  };
+  prompt_zh: string;
+  prompt_en: string;
+  background_url: string | null;
+  uploaded_name: string | null;
+  content_type: string | null;
+  byte_size: number;
+  background_deleted: boolean;
+  copy_state: Record<string, boolean>;
+  created_at: string;
+}
+
+export interface ImageWorkspace {
+  id: string;
+  article_draft_id: string;
+  status: string;
+  current_version: number;
+  use_css_background: boolean;
+  current: ImageVersion | null;
+  versions: ImageVersion[];
+}
+
+export interface DraftVersion {
+  id: string;
+  version: number;
+  title: string;
+  content: string;
+  source_task_id: string | null;
+  created_at: string;
 }
 
 export interface QueueStatus {
@@ -161,4 +359,3 @@ export interface ImportResult {
     message: string;
   }>;
 }
-

@@ -1,6 +1,12 @@
 import type {
   DashboardSummary,
+  AnswerList,
+  AnalysisOverview,
+  ClaimCluster,
   Draft,
+  DraftVersion,
+  HotQuestionFetchResult,
+  ImageWorkspace,
   ImportResult,
   ModelTestResult,
   Paginated,
@@ -21,10 +27,11 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const isFormData = init?.body instanceof FormData;
   const response = await fetch(`/api${path}`, {
     ...init,
     headers: {
-      "Content-Type": "application/json",
+      ...(isFormData ? {} : { "Content-Type": "application/json" }),
       ...init?.headers,
     },
   });
@@ -63,6 +70,21 @@ export const api = {
   questions: (filters: Record<string, string | number | undefined> = {}) =>
     request<Paginated<Question>>(`/questions${queryString(filters)}`),
   question: (id: string) => request<Question>(`/questions/${id}`),
+  answers: (id: string, filters: Record<string, string | number | undefined> = {}) =>
+    request<AnswerList>(`/questions/${id}/answers${queryString(filters)}`),
+  analysis: (id: string) => request<AnalysisOverview>(`/questions/${id}/analysis`),
+  fetchHotQuestions: (payload: {
+    limit: number;
+    collector_mode: "auto" | "api" | "browser";
+  }) =>
+    request<HotQuestionFetchResult>("/questions/hot/fetch", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  includeAnswer: (id: string) =>
+    request(`/answers/${id}/include`, { method: "POST" }),
+  excludeAnswer: (id: string) =>
+    request(`/answers/${id}/exclude`, { method: "POST" }),
   addQuestion: (payload: {
     url: string;
     title?: string;
@@ -90,6 +112,42 @@ export const api = {
     request<Question>(`/questions/${id}/ignore`, { method: "POST" }),
   deleteQuestion: (id: string) =>
     request<void>(`/questions/${id}`, { method: "DELETE" }),
+  updateCluster: (
+    id: string,
+    payload: Partial<
+      Pick<
+        ClaimCluster,
+        | "name"
+        | "summary"
+        | "cluster_type"
+        | "is_mainstream"
+        | "is_minority"
+        | "is_controversial"
+        | "sort_order"
+        | "write_policy"
+      >
+    >,
+  ) =>
+    request<ClaimCluster>(`/clusters/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  mergeClusters: (clusterIds: string[], name?: string) =>
+    request<ClaimCluster>("/clusters/merge", {
+      method: "POST",
+      body: JSON.stringify({ cluster_ids: clusterIds, name: name || null }),
+    }),
+  splitCluster: (id: string, claimIds: string[], name: string) =>
+    request<ClaimCluster>(`/clusters/${id}/split`, {
+      method: "POST",
+      body: JSON.stringify({ claim_ids: claimIds, name }),
+    }),
+  deleteCluster: (id: string) =>
+    request<void>(`/clusters/${id}`, { method: "DELETE" }),
+  reanalyzeCluster: (id: string) =>
+    request<ClaimCluster>(`/clusters/${id}/reanalyze`, { method: "POST" }),
+  regenerateOpinionMap: (questionId: string) =>
+    request(`/questions/${questionId}/generate-opinion-map`, { method: "POST" }),
 
   tasks: (filters: Record<string, string | number | undefined> = {}) =>
     request<Paginated<Task>>(`/tasks${queryString(filters)}`),
@@ -104,6 +162,64 @@ export const api = {
     request<Draft>(`/drafts/${id}`, {
       method: "PATCH",
       body: JSON.stringify(payload),
+    }),
+  reviewDraft: (id: string) =>
+    request<Draft>(`/drafts/${id}/review`, { method: "POST" }),
+  approveDraft: (id: string, reason = "") =>
+    request<Draft>(`/drafts/${id}/approve`, {
+      method: "POST",
+      body: JSON.stringify({ action: "approve", reason }),
+    }),
+  rejectDraft: (id: string, reason = "") =>
+    request<Draft>(`/drafts/${id}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ action: "reject", reason }),
+    }),
+  regenerateDraft: (id: string) =>
+    request<Draft>(`/drafts/${id}/regenerate`, { method: "POST" }),
+  draftVersions: (id: string) => request<DraftVersion[]>(`/drafts/${id}/versions`),
+  rewriteDraftText: (
+    id: string,
+    payload: {
+      scope: "paragraph" | "selection";
+      text: string;
+      instruction: string;
+    },
+  ) =>
+    request<{ text: string; usage: Record<string, number> }>(`/drafts/${id}/rewrite`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+
+  imageWorkspace: (draftId: string) =>
+    request<ImageWorkspace | null>(`/drafts/${draftId}/image-workspace`),
+  generateImagePrompt: (
+    draftId: string,
+    payload: { visual_style: string; aspect_ratio: string },
+  ) =>
+    request<ImageWorkspace>(`/drafts/${draftId}/generate-image-prompt`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  markImagePromptCopied: (imageId: string, language: "zh" | "en") =>
+    request<ImageWorkspace>(`/images/${imageId}/mark-copied`, {
+      method: "POST",
+      body: JSON.stringify({ language }),
+    }),
+  uploadVisualAsset: (draftId: string, file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    return request<ImageWorkspace>(`/drafts/${draftId}/upload-visual-asset`, {
+      method: "POST",
+      body: form,
+    });
+  },
+  deleteImageBackground: (imageId: string) =>
+    request<ImageWorkspace>(`/images/${imageId}/background`, { method: "DELETE" }),
+  setImageCssMode: (imageId: string, enabled: boolean) =>
+    request<ImageWorkspace>(`/images/${imageId}/css-mode`, {
+      method: "PATCH",
+      body: JSON.stringify({ enabled }),
     }),
 
   settings: () => request<PublicSettings>("/settings"),
@@ -122,4 +238,3 @@ export const api = {
       body: JSON.stringify(payload),
     }),
 };
-

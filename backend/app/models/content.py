@@ -49,6 +49,7 @@ class Answer(Base, UuidPrimaryKeyMixin, TimestampMixin):
         String(128), unique=True, nullable=False
     )
     author_name: Mapped[str] = mapped_column(String(200), default="")
+    author_url: Mapped[str] = mapped_column(String(1000), default="")
     answer_url: Mapped[str] = mapped_column(String(1000), default="")
     html_content: Mapped[str] = mapped_column(Text, default="")
     markdown_content: Mapped[str] = mapped_column(Text, default="")
@@ -56,6 +57,13 @@ class Answer(Base, UuidPrimaryKeyMixin, TimestampMixin):
     content_hash: Mapped[str] = mapped_column(String(64), index=True)
     vote_count: Mapped[int] = mapped_column(Integer, default=0)
     comment_count: Mapped[int] = mapped_column(Integer, default=0)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    external_updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True)
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    media_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
+    fetch_batch: Mapped[str] = mapped_column(String(64), default="", index=True)
     included_for_analysis: Mapped[bool] = mapped_column(Boolean, default=True)
     filter_reason: Mapped[str] = mapped_column(String(500), default="")
     raw_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
@@ -87,6 +95,9 @@ class AnswerAnalysis(Base, UuidPrimaryKeyMixin, TimestampMixin):
     structured_result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     quality_score: Mapped[float] = mapped_column(Float, default=0)
     relevance_score: Mapped[float] = mapped_column(Float, default=0)
+    information_density: Mapped[float] = mapped_column(Float, default=0)
+    include: Mapped[bool] = mapped_column(Boolean, default=True)
+    reason: Mapped[str] = mapped_column(String(500), default="")
 
 
 class Claim(Base, UuidPrimaryKeyMixin, TimestampMixin):
@@ -129,6 +140,13 @@ class ClaimCluster(Base, UuidPrimaryKeyMixin, TimestampMixin):
     summary: Mapped[str] = mapped_column(Text, default="")
     cluster_type: Mapped[str] = mapped_column(String(32), default="consensus")
     confidence: Mapped[float] = mapped_column(Float, default=0)
+    support_count: Mapped[int] = mapped_column(Integer, default=0)
+    opposing_reasons: Mapped[list[str]] = mapped_column(JSON, default=list)
+    applicable_conditions: Mapped[list[str]] = mapped_column(JSON, default=list)
+    is_mainstream: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_minority: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_controversial: Mapped[bool] = mapped_column(Boolean, default=False)
+    information_gain: Mapped[float] = mapped_column(Float, default=0)
     metadata_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
 
 
@@ -159,3 +177,16 @@ class ArticleParagraphSource(Base, UuidPrimaryKeyMixin):
         ForeignKey("claim_clusters.id", ondelete="SET NULL")
     )
 
+
+class OpinionMap(Base, UuidPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "opinion_maps"
+    __table_args__ = (UniqueConstraint("question_id", "version"),)
+
+    question_id: Mapped[str] = mapped_column(
+        ForeignKey("questions.id", ondelete="CASCADE"), index=True
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    status: Mapped[str] = mapped_column(String(32), default="generated")
+    content_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )

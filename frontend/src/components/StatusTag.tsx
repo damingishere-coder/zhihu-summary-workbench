@@ -16,9 +16,20 @@ const statusMap: Record<
   candidate: { label: "待处理", color: "default", icon: <ClockCircleFilled /> },
   queued: { label: "队列中", color: "processing", icon: <ClockCircleFilled /> },
   preparing_input: { label: "准备输入", color: "processing", icon: <SyncOutlined spin /> },
+  fetching_question: { label: "读取问题", color: "processing", icon: <SyncOutlined spin /> },
+  fetching_answers: { label: "采集回答", color: "processing", icon: <SyncOutlined spin /> },
+  cleaning_answers: { label: "清洗去重", color: "processing", icon: <SyncOutlined spin /> },
+  evaluating_answers: { label: "质量筛选", color: "processing", icon: <SyncOutlined spin /> },
   extracting_claims: { label: "观点提取", color: "processing", icon: <SyncOutlined spin /> },
+  generating_embeddings: { label: "生成向量", color: "processing", icon: <SyncOutlined spin /> },
+  clustering_claims: { label: "观点粗聚类", color: "processing", icon: <SyncOutlined spin /> },
+  refining_clusters: { label: "聚类修正", color: "processing", icon: <SyncOutlined spin /> },
+  generating_opinion_map: { label: "观点地图", color: "processing", icon: <SyncOutlined spin /> },
+  generating_article: { label: "生成文章", color: "processing", icon: <SyncOutlined spin /> },
+  reviewing_article: { label: "独立审核", color: "processing", icon: <SyncOutlined spin /> },
   saving_result: { label: "保存结果", color: "processing", icon: <SyncOutlined spin /> },
   waiting_review: { label: "待审核", color: "warning", icon: <ClockCircleFilled /> },
+  review_rejected: { label: "已退回", color: "error", icon: <CloseCircleFilled /> },
   review_approved: { label: "已通过", color: "success", icon: <CheckCircleFilled /> },
   scheduled: { label: "已排期", color: "cyan", icon: <ClockCircleFilled /> },
   published: { label: "已发布", color: "success", icon: <CheckCircleFilled /> },
@@ -43,4 +54,3 @@ export function StatusTag({ status }: { status: string }) {
     </Tag>
   );
 }
-

@@ -19,4 +19,4 @@ Set-Location -LiteralPath $FrontendRoot
 & npm.cmd run build
 & npm.cmd run test:sites
 
-Write-Output "All phase-one automated tests passed"
+Write-Output "All automated tests passed"

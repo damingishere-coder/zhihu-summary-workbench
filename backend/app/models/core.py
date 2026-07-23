@@ -39,6 +39,11 @@ class Question(Base, UuidPrimaryKeyMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(64), default="candidate", index=True)
     priority: Mapped[str] = mapped_column(String(16), default="medium", index=True)
     content_hash: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    hot_rank: Mapped[int | None] = mapped_column(Integer)
+    hot_score: Mapped[str] = mapped_column(String(100), default="", nullable=False)
+    answer_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    follower_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    fetched_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     sources: Mapped[list["QuestionSource"]] = relationship(
         back_populates="question", cascade="all, delete-orphan"
@@ -174,6 +179,10 @@ class ArticleDraft(Base, UuidPrimaryKeyMixin, TimestampMixin):
     analysis_snapshot: Mapped[dict[str, Any]] = mapped_column(
         JSON, default=dict, nullable=False
     )
+    review_result: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    reviewed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     question: Mapped[Question] = relationship(back_populates="drafts")
     versions: Mapped[list["ArticleVersion"]] = relationship(
@@ -260,4 +269,3 @@ class OpenSourceReference(Base, UuidPrimaryKeyMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
-

@@ -14,12 +14,15 @@
 | `/settings` | 设置 | 每日计划、并发、超时、Embedding、图片工作流和浏览器目录 | 校验失败、保存中 |
 | `/settings/ai` | AI 与模型 | Provider 模式、模型角色、密钥配置状态、连接测试 | Mock 成功、无密钥、超时 |
 
+## 第二阶段页面扩展
+
+- `/questions/:id`：原始回答、纳入状态、回答评分、观点簇、观点地图、来源回答、模型用量和任务日志三栏同屏。
+- `/drafts/:id/review`：文章编辑/预览、信息图文案、图片 Prompt、手动上传、纯 CSS 模式、段落来源、独立质量审核和审批三栏同屏。
+
 ## 后续阶段页面
 
 以下页面属于完整规格，但当前不实现正式业务：
 
-- 第二阶段扩展 `/questions/:id` 的回答、观点地图和来源追踪。
-- 第二阶段扩展 `/drafts/:id/review` 的三栏编辑与质量审核。
 - 第三阶段完善 `/publish`。
 - 第三阶段新增 `/prompts`、`/settings/browser`、`/settings/open-source`。
 

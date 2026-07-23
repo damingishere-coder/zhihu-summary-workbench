@@ -80,13 +80,22 @@ class DeepSeekProvider(TextGenerationProvider, StructuredOutputProvider):
                     body = response.json()
                 content = body["choices"][0]["message"]["content"]
                 usage_payload = body.get("usage", {})
+                input_tokens = int(usage_payload.get("prompt_tokens", 0))
+                output_tokens = int(usage_payload.get("completion_tokens", 0))
                 return content, ProviderUsage(
                     provider=self.name,
                     model=model,
                     model_role=model_role,
-                    input_tokens=int(usage_payload.get("prompt_tokens", 0)),
-                    output_tokens=int(usage_payload.get("completion_tokens", 0)),
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
                     duration_ms=int((time.perf_counter() - started) * 1000),
+                    estimated_cost=(
+                        input_tokens
+                        * self.settings.deepseek_input_cost_per_million
+                        + output_tokens
+                        * self.settings.deepseek_output_cost_per_million
+                    )
+                    / 1_000_000,
                 )
             except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
                 last_error = exc
@@ -133,6 +142,32 @@ class DeepSeekProvider(TextGenerationProvider, StructuredOutputProvider):
         try:
             data = output_schema.model_validate_json(cleaned)
         except (ValidationError, json.JSONDecodeError) as exc:
-            raise ProviderResponseError(f"DeepSeek 结构化输出校验失败：{exc}") from exc
+            repair_prompt = (
+                "以下模型输出不是有效的目标 JSON。只修复 JSON 结构和字段类型，"
+                "不要补充新事实；返回一个 JSON 对象：\n\n"
+                f"{cleaned}"
+            )
+            repaired, repair_usage = await self._request(
+                system_prompt=(
+                    "你是 JSON 修复器。输出必须严格满足这个 JSON Schema：\n"
+                    f"{json.dumps(output_schema.model_json_schema(), ensure_ascii=False)}"
+                ),
+                user_prompt=repair_prompt,
+                model_role=model_role,
+                structured=True,
+            )
+            repaired = repaired.strip()
+            if repaired.startswith("```"):
+                repaired = repaired.removeprefix("```json").removeprefix("```")
+                repaired = repaired.removesuffix("```").strip()
+            try:
+                data = output_schema.model_validate_json(repaired)
+            except (ValidationError, json.JSONDecodeError) as repair_exc:
+                raise ProviderResponseError(
+                    f"DeepSeek 结构化输出自动修复失败：{repair_exc}"
+                ) from repair_exc
+            usage.input_tokens += repair_usage.input_tokens
+            usage.output_tokens += repair_usage.output_tokens
+            usage.duration_ms += repair_usage.duration_ms
+            usage.estimated_cost += repair_usage.estimated_cost
         return StructuredProviderResult(data=data, usage=usage)
-

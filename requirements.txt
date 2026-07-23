@@ -3,8 +3,9 @@ aiosqlite>=0.21,<1
 fastapi>=0.115,<1
 httpx>=0.28,<1
 orjson>=3.10,<4
+playwright>=1.54,<2
 pydantic-settings>=2.8,<3
+python-multipart>=0.0.20,<1
 redis>=5.2,<7
 sqlalchemy>=2.0,<3
 uvicorn[standard]>=0.34,<1
-

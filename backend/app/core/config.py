@@ -37,6 +37,12 @@ class Settings(BaseSettings):
     ai_provider_mode: Literal["mock", "deepseek"] = "mock"
     ai_request_timeout_seconds: int = 60
     task_max_retries: int = 2
+    answer_quality_batch_size: int = 8
+    claim_extraction_batch_size: int = 5
+    cluster_similarity_threshold: float = 0.35
+    article_target_length: int = 1800
+    deepseek_input_cost_per_million: float = 0
+    deepseek_output_cost_per_million: float = 0
 
     image_generation_mode: Literal["manual"] = "manual"
     image_prompt_model_role: str = "fast_text_model"
@@ -70,4 +76,3 @@ class Settings(BaseSettings):
 @lru_cache
 def get_settings() -> Settings:
     return Settings()
-

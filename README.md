@@ -2,9 +2,9 @@
 
 针对一个知乎问题，管理回答聚合、观点提取、共识与分歧、总结草稿和信息图生产流程。
 
-当前仓库严格按 [`CODEX_IMPLEMENTATION_SPEC.md`](CODEX_IMPLEMENTATION_SPEC.md) 的三阶段顺序开发。当前分支只实现第一阶段：基础架构、AI Provider、任务队列、Worker、SSE、前端工作台和最小闭环。
+当前仓库严格按 [`CODEX_IMPLEMENTATION_SPEC.md`](CODEX_IMPLEMENTATION_SPEC.md) 的三阶段顺序开发。当前分支已完成第一、第二阶段：知乎回答采集、DeepSeek 文本分析、Embedding、观点聚类、总结文章、来源映射、独立审核，以及放在草稿审核中的手动图片 Prompt 工作流。
 
-## 第一阶段已经提供
+## 当前已经提供
 
 - FastAPI REST API 和 OpenAPI 文档；
 - SQLAlchemy 长期数据模型和 Alembic 初始迁移；
@@ -17,9 +17,20 @@
 - React、TypeScript、Vite、Ant Design 管理工作台；
 - 仪表盘、问题池、问题详情、任务中心、草稿审核、发布准备和设置；
 - 亮色/暗色模式、加载/空/错误/禁用/危险确认状态；
-- Windows PowerShell 启动和测试脚本。
+- Windows PowerShell 启动和测试脚本；
+- 知乎 API 与用户本地已登录 Chrome 会话双模式采集；
+- 问题池中的知乎热榜同步入口；
+- HTML 清洗、Markdown/纯文本转换、媒体提取、内容哈希去重和基础过滤；
+- 批量回答质量筛选和观点提取；
+- 本地多语言字符 n-gram Embedding、向量缓存和余弦粗聚类；
+- 聚类修正、观点地图、总结文章、段落来源和独立审核；
+- 观点簇重命名、排序、写入策略、来源查看、拆分、合并、删除和局部重新分析；
+- 问题详情“回答 / 观点地图 / 任务与费用”三栏工作区；
+- 草稿审核“文章 / 图片 Prompt 与上传 / 来源与质量”三栏工作区；
+- 草稿 Markdown/富文本编辑、选中文字或当前段落改写、撤销和历史版本恢复；
+- 中英文图片 Prompt 复制、手动上传、替换、移除、纯 CSS 降级和历史版本。
 
-第一阶段不采集真实知乎回答，也不执行正式发布。真实采集、聚类和文章生成属于第二阶段；图片 Prompt、信息图和发布属于第三阶段。
+本项目不调用图片生成 API。图片 Prompt 由系统生成，用户在 ChatGPT 中手动生图后上传；未上传图片时继续使用纯 CSS 背景。正式信息图 PNG 渲染、发布排期和辅助发布仍属于第三阶段。
 
 ## 系统结构
 
@@ -82,7 +93,15 @@ Set-Location ..
 
 成功时会显示安装的软件包数量。
 
-### 4. 启动全部开发服务
+### 4. 安装 Playwright 的 Chrome 支持
+
+```powershell
+.\.venv\Scripts\python.exe -m playwright install chrome
+```
+
+这条命令安装第二阶段浏览器采集所需的驱动。成功时不会出现红色错误。系统只在知乎接口模式不可用、且你配置了本地已登录浏览器目录时使用它。
+
+### 5. 启动全部开发服务
 
 先确认 Docker Desktop 已打开，再运行：
 
@@ -114,7 +133,7 @@ Redis 已就绪
 
 运行日志在 `logs/` 目录。
 
-### 5. 停止开发服务
+### 6. 停止开发服务
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-dev.ps1
@@ -160,11 +179,11 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-tests.ps1
 - 前端生产构建；
 - Sites 运行壳契约测试。
 
-所有步骤成功后会显示 `第一阶段自动化测试全部通过`。
+所有步骤成功后会显示 `All automated tests passed`。
 
 ## DeepSeek 配置
 
-默认 `Mock` 模式无需 API Key，可以验证完整前后端、Worker、数据库和 SSE。
+默认 `Mock` 模式无需 API Key，可以验证回答筛选、观点提取、Embedding、聚类、观点地图、文章、来源映射、独立审核和图片 Prompt 的完整结构。
 
 如需测试真实 DeepSeek：
 
@@ -174,6 +193,40 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-tests.ps1
 4. 在“设置 → AI 与模型”中切换并测试。
 
 不要把 `.env`、密钥、Cookie、Token、账号密码或浏览器缓存提交到 Git。设置 API 只返回“已配置/未配置”，不会返回密钥原文。
+
+模型价格会变化，项目不会把价格写死。需要费用估算时，只在本机 `.env` 配置：
+
+```env
+DEEPSEEK_INPUT_COST_PER_MILLION=
+DEEPSEEK_OUTPUT_COST_PER_MILLION=
+```
+
+## 知乎采集与安全边界
+
+知乎接口可能要求登录或返回访问限制。系统按以下顺序工作：
+
+1. 先尝试接口模式；
+2. 接口需要登录时，切换到设置页配置的本地 Chrome 用户数据目录；
+3. 只读取用户正常可见、已经登录的页面；
+4. 登录失效、验证码、安全验证或页面无法识别时立即暂停；
+5. 不破解验证码，不保存账号密码，不实现代理池、账号池或设备指纹伪造；
+6. 已采集回答、任务日志和失败原因会保留，限制解除后可重试。
+
+设置页填写的是本机目录路径，不是 Cookie。不要把浏览器目录复制到项目、云盘或 Git。
+
+## 草稿中的手动图片 Prompt
+
+打开“草稿审核”后，中间栏提供：
+
+- 信息图结构化文案；
+- 生成和重新生成图片 Prompt；
+- 复制中文或英文 Prompt；
+- 推荐尺寸、比例和负面约束；
+- 上传、替换或移除手动生成图片；
+- 纯 CSS 背景开关；
+- Prompt 和上传图片历史版本。
+
+上传图片保存在本机 `data/uploads/images/`，该目录已被 Git 忽略，不会提交到仓库。
 
 ## 常见问题
 
@@ -219,7 +272,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-成功时会显示当前 revision `20260723_0001`。不要直接删除有业务数据的数据库文件。
+成功时会显示当前 revision `20260724_0002 (head)`。不要直接删除有业务数据的数据库文件。
 
 ## 安全边界
 
@@ -233,7 +286,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 
 ## 开源参考与许可证
 
-第一阶段没有复制规格中参考仓库的代码，只参考了架构思想。直接使用的主要依赖：
+本项目没有复制规格中参考仓库的代码，只参考架构思想。直接使用的主要依赖：
 
 | 项目 | 用途 | 许可证/授权 |
 | --- | --- | --- |
@@ -243,6 +296,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 | SQLAlchemy | ORM | MIT |
 | Alembic | 数据库迁移 | MIT |
 | Redis 官方容器 | 队列和 Pub/Sub | 以所用 Redis 版本官方授权为准 |
+| Microsoft Playwright | 本地已登录浏览器采集降级 | Apache-2.0 |
 
 完整依赖和精确版本以 `requirements*.txt`、`frontend/package-lock.json` 和已安装包许可证文件为准。后续阶段若借鉴规格列出的 GitHub 项目，必须先记录项目、版本和许可证；无明确许可证时只参考思路并自行重写。
 
@@ -250,6 +304,8 @@ Get-Content .\logs\worker-error.log -Tail 100
 
 - [仓库分析](docs/architecture/repository-analysis.md)
 - [第一阶段实施计划](docs/architecture/phase-1-implementation-plan.md)
+- [第二阶段实施计划](docs/architecture/phase-2-implementation-plan.md)
 - [数据库迁移方案](docs/architecture/database-migration-plan.md)
 - [产品设计简报](docs/design/product-design-brief.md)
 - [第一阶段进度](docs/progress/phase-1.md)
+- [第二阶段进度](docs/progress/phase-2.md)

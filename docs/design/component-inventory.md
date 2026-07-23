@@ -22,6 +22,9 @@
 | `ProgressCell` | 百分比、进度条和阶段文字 |
 | `ActivityTimeline` | 最近操作和任务日志 |
 | `StructuredResult` | 结构化观点、摘要、风险和来源 |
+| `AnswerExplorer` | 回答列表、质量分、纳入状态、展开正文和来源链接 |
+| `OpinionMapPanel` | 共识、分歧、少数派、条件、风险、建议和来源抽屉 |
+| `ImagePromptWorkspace` | 信息图文案、中文/英文 Prompt、复制、上传、纯 CSS 和历史版本 |
 
 ## 输入与操作
 
