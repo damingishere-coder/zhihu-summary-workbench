@@ -1,0 +1,10 @@
+alembic>=1.15,<2
+aiosqlite>=0.21,<1
+fastapi>=0.115,<1
+httpx>=0.28,<1
+orjson>=3.10,<4
+pydantic-settings>=2.8,<3
+redis>=5.2,<7
+sqlalchemy>=2.0,<3
+uvicorn[standard]>=0.34,<1
+
