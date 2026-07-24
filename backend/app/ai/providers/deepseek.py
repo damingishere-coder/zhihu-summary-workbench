@@ -48,59 +48,69 @@ class DeepSeekProvider(TextGenerationProvider, StructuredOutputProvider):
         model_role: str,
         structured: bool,
     ) -> tuple[str, ProviderUsage]:
-        model = self._model_for_role(model_role)
         url = f"{self.settings.deepseek_base_url.rstrip('/')}/chat/completions"
-        payload: dict[str, object] = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            "temperature": 0.1,
-        }
-        if structured:
-            payload["response_format"] = {"type": "json_object"}
-
         started = time.perf_counter()
         last_error: Exception | None = None
-        for attempt in range(3):
-            try:
-                async with httpx.AsyncClient(
-                    timeout=self.settings.ai_request_timeout_seconds
-                ) as client:
-                    response = await client.post(
-                        url,
-                        headers={
-                            "Authorization": f"Bearer {self.settings.deepseek_key_value}",
-                            "Content-Type": "application/json",
-                        },
-                        json=payload,
+        primary_model = self._model_for_role(model_role)
+        fallback_model = self._model_for_role("fallback_text_model")
+        models = [primary_model]
+        if model_role != "fallback_text_model" and fallback_model != primary_model:
+            models.append(fallback_model)
+        retry_count = 0
+        for model_index, model in enumerate(models):
+            payload: dict[str, object] = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                "temperature": 0.1,
+            }
+            if structured:
+                payload["response_format"] = {"type": "json_object"}
+            for attempt in range(3 if model_index == 0 else 1):
+                try:
+                    async with httpx.AsyncClient(
+                        timeout=self.settings.ai_request_timeout_seconds
+                    ) as client:
+                        response = await client.post(
+                            url,
+                            headers={
+                                "Authorization": (
+                                    f"Bearer {self.settings.deepseek_key_value}"
+                                ),
+                                "Content-Type": "application/json",
+                            },
+                            json=payload,
+                        )
+                        response.raise_for_status()
+                        body = response.json()
+                    content = body["choices"][0]["message"]["content"]
+                    usage_payload = body.get("usage", {})
+                    input_tokens = int(usage_payload.get("prompt_tokens", 0))
+                    output_tokens = int(usage_payload.get("completion_tokens", 0))
+                    return content, ProviderUsage(
+                        provider=self.name,
+                        model=model,
+                        model_role=model_role,
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                        duration_ms=int((time.perf_counter() - started) * 1000),
+                        estimated_cost=(
+                            input_tokens
+                            * self.settings.deepseek_input_cost_per_million
+                            + output_tokens
+                            * self.settings.deepseek_output_cost_per_million
+                        )
+                        / 1_000_000,
+                        fallback_used=model_index > 0,
+                        retry_count=retry_count,
                     )
-                    response.raise_for_status()
-                    body = response.json()
-                content = body["choices"][0]["message"]["content"]
-                usage_payload = body.get("usage", {})
-                input_tokens = int(usage_payload.get("prompt_tokens", 0))
-                output_tokens = int(usage_payload.get("completion_tokens", 0))
-                return content, ProviderUsage(
-                    provider=self.name,
-                    model=model,
-                    model_role=model_role,
-                    input_tokens=input_tokens,
-                    output_tokens=output_tokens,
-                    duration_ms=int((time.perf_counter() - started) * 1000),
-                    estimated_cost=(
-                        input_tokens
-                        * self.settings.deepseek_input_cost_per_million
-                        + output_tokens
-                        * self.settings.deepseek_output_cost_per_million
-                    )
-                    / 1_000_000,
-                )
-            except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
-                last_error = exc
-                if attempt < 2:
-                    await asyncio.sleep(0.5 * (2**attempt))
+                except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+                    last_error = exc
+                    retry_count += 1
+                    if attempt < 2 and model_index == 0:
+                        await asyncio.sleep(0.5 * (2**attempt))
         raise ProviderResponseError(f"DeepSeek 请求失败：{last_error}")
 
     async def generate_text(
@@ -170,4 +180,8 @@ class DeepSeekProvider(TextGenerationProvider, StructuredOutputProvider):
             usage.output_tokens += repair_usage.output_tokens
             usage.duration_ms += repair_usage.duration_ms
             usage.estimated_cost += repair_usage.estimated_cost
+            usage.retry_count += repair_usage.retry_count + 1
+            usage.fallback_used = (
+                usage.fallback_used or repair_usage.fallback_used
+            )
         return StructuredProviderResult(data=data, usage=usage)

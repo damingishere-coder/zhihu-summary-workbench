@@ -19,8 +19,19 @@ class PublicSettings(BaseModel):
     image_generation_mode: str
     allow_manual_image_upload: bool
     daily_question_limit: int
+    hot_question_quota: int
+    manual_question_quota: int
+    max_answers_per_question: int
     max_ai_concurrency: int
     request_timeout_seconds: int
+    daily_plan_time: str
+    daily_publish_limit: int
+    publish_interval_minutes: int
+    auto_production_enabled: bool
+    auto_publish_enabled: bool
+    daily_model_budget: float
+    pause_on_budget_exceeded: bool
+    response_cache_enabled: bool
     browser_user_data_dir: str
     redis_url_display: str
 
@@ -32,9 +43,34 @@ class SettingsUpdate(BaseModel):
     fallback_text_model: str | None = Field(default=None, min_length=1, max_length=128)
     embedding_model: str | None = Field(default=None, min_length=1, max_length=256)
     daily_question_limit: int | None = Field(default=None, ge=1, le=100)
+    hot_question_quota: int | None = Field(default=None, ge=0, le=100)
+    manual_question_quota: int | None = Field(default=None, ge=0, le=100)
+    max_answers_per_question: int | None = Field(default=None, ge=1, le=500)
     max_ai_concurrency: int | None = Field(default=None, ge=1, le=20)
     request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
+    daily_plan_time: str | None = Field(
+        default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"
+    )
+    daily_publish_limit: int | None = Field(default=None, ge=1, le=100)
+    publish_interval_minutes: int | None = Field(default=None, ge=5, le=1440)
+    auto_production_enabled: bool | None = None
+    auto_publish_enabled: bool | None = None
+    daily_model_budget: float | None = Field(default=None, ge=0, le=1_000_000)
+    pause_on_budget_exceeded: bool | None = None
+    response_cache_enabled: bool | None = None
     browser_user_data_dir: str | None = Field(default=None, max_length=1000)
+
+    @model_validator(mode="after")
+    def validate_quotas(self) -> "SettingsUpdate":
+        if (
+            self.daily_question_limit is not None
+            and self.hot_question_quota is not None
+            and self.manual_question_quota is not None
+            and self.hot_question_quota + self.manual_question_quota
+            > self.daily_question_limit
+        ):
+            raise ValueError("热门配额与手动配额之和不能超过每日问题数")
+        return self
 
 
 class ModelTestRequest(BaseModel):
@@ -65,4 +101,3 @@ class SettingsValidation(BaseModel):
         if self.provider_mode == "deepseek" and not self.deepseek_configured:
             raise ValueError("DeepSeek 模式需要在本机 .env 中配置 DEEPSEEK_API_KEY")
         return self
-

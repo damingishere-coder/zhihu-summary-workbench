@@ -43,6 +43,9 @@ class Settings(BaseSettings):
     article_target_length: int = 1800
     deepseek_input_cost_per_million: float = 0
     deepseek_output_cost_per_million: float = 0
+    daily_model_budget: float = 0
+    pause_on_budget_exceeded: bool = True
+    response_cache_enabled: bool = True
 
     image_generation_mode: Literal["manual"] = "manual"
     image_prompt_model_role: str = "fast_text_model"
@@ -59,6 +62,12 @@ class Settings(BaseSettings):
     manual_question_quota: int = 4
     max_answers_per_question: int = 100
     max_ai_concurrency: int = 3
+    daily_plan_time: str = "09:00"
+    daily_publish_limit: int = 10
+    publish_interval_minutes: int = 30
+    auto_production_enabled: bool = False
+    auto_publish_enabled: bool = False
+    infographic_render_attempts: int = 2
 
     cors_origins: list[str] = [
         "http://127.0.0.1:5173",

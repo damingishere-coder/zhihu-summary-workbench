@@ -11,6 +11,7 @@ from backend.app.api.dependencies import get_broker
 from backend.app.core.config import Settings, get_settings
 from backend.app.db.session import get_db_session
 from backend.app.models.core import ArticleDraft, Question, TaskJob, TaskLog
+from backend.app.models.media import PublishRecord
 from backend.app.schemas.dashboard import (
     DashboardMetrics,
     DashboardSummary,
@@ -72,6 +73,26 @@ async def dashboard_summary(
         )
         or 0
     )
+    ready_to_publish = int(
+        (
+            await session.scalar(
+                select(func.count(ArticleDraft.id)).where(
+                    ArticleDraft.status == "review_approved"
+                )
+            )
+        )
+        or 0
+    )
+    published = int(
+        (
+            await session.scalar(
+                select(func.count(PublishRecord.id)).where(
+                    PublishRecord.status == "published"
+                )
+            )
+        )
+        or 0
+    )
     recent_tasks = (
         await session.scalars(
             select(TaskJob)
@@ -101,8 +122,8 @@ async def dashboard_summary(
             today_plan=settings.daily_question_limit,
             processing=processing,
             waiting_review=waiting_review,
-            ready_to_publish=0,
-            published=0,
+            ready_to_publish=ready_to_publish,
+            published=published,
             failed=failed,
         ),
         health=ServiceHealth(

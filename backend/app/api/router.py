@@ -7,6 +7,7 @@ from backend.app.api.routes import (
     drafts,
     health,
     images,
+    publish,
     prompts,
     questions,
     settings,
@@ -23,5 +24,6 @@ api_router.include_router(analysis.router)
 api_router.include_router(tasks.router)
 api_router.include_router(drafts.router)
 api_router.include_router(images.router)
+api_router.include_router(publish.router)
 api_router.include_router(settings.router)
 api_router.include_router(prompts.router)

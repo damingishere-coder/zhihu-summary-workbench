@@ -27,6 +27,7 @@ from backend.app.schemas.analysis import (
     OpinionMapData,
 )
 from backend.app.schemas.draft import DraftRewriteResult
+from backend.app.schemas.image import InfographicContentData, InfographicPoint
 
 
 T = TypeVar("T", bound=BaseModel)
@@ -389,5 +390,66 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
                 deduplicated = deduplicated[:4]
             rewritten = "".join(deduplicated).strip() or source
             return DraftRewriteResult(text=rewritten)
+
+        if output_schema is InfographicContentData:
+            opinion = payload.get("opinion_map")
+            if not isinstance(opinion, dict):
+                opinion = {}
+            clusters = [
+                item for item in payload.get("clusters", []) if isinstance(item, dict)
+            ]
+            consensus_values = [
+                str(item) for item in opinion.get("main_consensus", []) if item
+            ][:4]
+            if not consensus_values:
+                consensus_values = [
+                    str(item.get("summary") or item.get("name") or "")
+                    for item in clusters
+                    if item.get("summary") or item.get("name")
+                ][:4]
+            conclusion = str(
+                opinion.get("one_sentence_answer")
+                or (consensus_values[0] if consensus_values else "需要结合具体条件判断")
+            )
+            source_cluster_ids = [
+                str(item.get("id")) for item in clusters if item.get("id")
+            ][:16]
+            return InfographicContentData(
+                title=str(payload.get("question_title") or "多回答综合总结")[:48],
+                one_line_conclusion=conclusion[:96],
+                consensus=[
+                    InfographicPoint(
+                        title=f"共识 {index}",
+                        description=value[:110],
+                    )
+                    for index, value in enumerate(consensus_values, start=1)
+                ],
+                disagreements=[
+                    str(item)[:96]
+                    for item in opinion.get("main_disagreements", [])
+                    if item
+                ][:4],
+                conditions=[
+                    str(item)[:96]
+                    for item in opinion.get("applicable_conditions", [])
+                    if item
+                ][:4],
+                suggestions=[
+                    str(item)[:96]
+                    for item in opinion.get("practical_suggestions", [])
+                    if item
+                ][:4],
+                visual_keywords=[
+                    str(item)[:20]
+                    for item in opinion.get("main_dimensions", [])
+                    if item
+                ][:8],
+                source_cluster_ids=source_cluster_ids,
+                source_answer_ids=[
+                    str(item)
+                    for item in opinion.get("source_answer_ids", [])
+                    if item
+                ][:100],
+            )
 
         raise TypeError(f"MockProvider 尚未注册结构：{output_schema.__name__}")

@@ -90,7 +90,14 @@ async def test_manual_image_prompt_upload_css_and_history(app_client) -> None:
     assert copied.status_code == 200
     assert copied.json()["current"]["copy_state"]["zh"] is True
 
-    png = b"\x89PNG\r\n\x1a\n" + b"manual-image-fixture"
+    # 真实可解析的 1×1 PNG；上传服务会用 Pillow 验证内容并生成缩略图。
+    png = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde"
+        b"\x00\x00\x00\x0cIDAT\x08\xd7c\xf8\xcf\xc0\x00\x00"
+        b"\x03\x01\x01\x00\xc9\xfe\x92\xef\x00\x00\x00\x00"
+        b"IEND\xaeB`\x82"
+    )
     uploaded = await client.post(
         f"/api/drafts/{draft_id}/upload-visual-asset",
         files={"file": ("background.png", png, "image/png")},
@@ -99,7 +106,8 @@ async def test_manual_image_prompt_upload_css_and_history(app_client) -> None:
     uploaded_workspace = uploaded.json()
     assert uploaded_workspace["use_css_background"] is False
     assert uploaded_workspace["current"]["background_url"]
-    assert len(uploaded_workspace["versions"]) == 2
+    # 信息图内容、Prompt、上传背景各自保留一个不可覆盖的版本。
+    assert len(uploaded_workspace["versions"]) == 3
 
     asset = await client.get(uploaded_workspace["current"]["background_url"])
     assert asset.status_code == 200
@@ -116,7 +124,8 @@ async def test_manual_image_prompt_upload_css_and_history(app_client) -> None:
     assert removed.status_code == 200
     assert removed.json()["current"]["background_url"] is None
     assert removed.json()["current"]["background_deleted"] is True
-    assert len(removed.json()["versions"]) == 3
+    # CSS 模式切换和删除背景也各自形成可恢复版本。
+    assert len(removed.json()["versions"]) == 5
 
     async with get_session_factory()() as session:
         image_draft_id = await session.scalar(

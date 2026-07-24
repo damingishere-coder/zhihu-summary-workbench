@@ -2,7 +2,7 @@
 
 针对一个知乎问题，管理回答聚合、观点提取、共识与分歧、总结草稿和信息图生产流程。
 
-当前仓库严格按 [`CODEX_IMPLEMENTATION_SPEC.md`](CODEX_IMPLEMENTATION_SPEC.md) 的三阶段顺序开发。当前分支已完成第一、第二阶段：知乎回答采集、DeepSeek 文本分析、Embedding、观点聚类、总结文章、来源映射、独立审核，以及放在草稿审核中的手动图片 Prompt 工作流。
+当前仓库严格按 [`CODEX_IMPLEMENTATION_SPEC.md`](CODEX_IMPLEMENTATION_SPEC.md) 的三阶段顺序开发。当前分支已完成第一、第二、第三阶段：从知乎回答采集、观点分析、草稿审核，到信息图编辑与 PNG 渲染、发布排期、安全确认、成本统计和 Prompt 版本管理，已经形成可本地运行的完整闭环。
 
 ## 当前已经提供
 
@@ -28,9 +28,18 @@
 - 问题详情“回答 / 观点地图 / 任务与费用”三栏工作区；
 - 草稿审核“文章 / 图片 Prompt 与上传 / 来源与质量”三栏工作区；
 - 草稿 Markdown/富文本编辑、选中文字或当前段落改写、撤销和历史版本恢复；
-- 中英文图片 Prompt 复制、手动上传、替换、移除、纯 CSS 降级和历史版本。
+- 中英文图片 Prompt 复制、手动上传、替换、移除、纯 CSS 降级和历史版本；
+- 有长度约束的信息图 JSON，以及“知识总结卡 / 观点对比表”两种模板；
+- 草稿审核中的信息图完整编辑器：内容排序、删除、字号、模板、背景位置、品牌、页脚和版本恢复；
+- Playwright 固定视口 PNG 渲染、字体/图片等待、文字溢出检测、重试、HTML 快照、日志、批量渲染和下载；
+- 发布内容准备检查、冻结文章/图片版本、日历排期、拖动改期、每日上限、最小间隔和冲突提示；
+- 输入“确认发布”后的人工发布包，以及登录、验证码、风控和浏览器不可用时的安全暂停记录；
+- 每日计划立即执行/定时执行共用服务，自动生产与自动发布默认关闭；
+- 今日/问题/阶段模型调用与费用、预算暂停、结构化响应缓存、重试和备用模型统计；
+- Prompt 列表、新版本、活动版本、测试、回滚和审计；
+- 浏览器安全设置、开源组件与许可证页面。
 
-本项目不调用图片生成 API。图片 Prompt 由系统生成，用户在 ChatGPT 中手动生图后上传；未上传图片时继续使用纯 CSS 背景。正式信息图 PNG 渲染、发布排期和辅助发布仍属于第三阶段。
+本项目不调用图片生成 API。图片 Prompt 由系统生成，用户在 ChatGPT 中手动生图后上传；未上传图片时继续使用纯 CSS 背景。图片上的中文由本地 HTML/CSS 精确排版，再由 Playwright 导出 PNG。
 
 ## 系统结构
 
@@ -99,7 +108,7 @@ Set-Location ..
 .\.venv\Scripts\python.exe -m playwright install chrome
 ```
 
-这条命令安装第二阶段浏览器采集所需的驱动。成功时不会出现红色错误。系统只在知乎接口模式不可用、且你配置了本地已登录浏览器目录时使用它。
+这条命令安装浏览器采集和第三阶段信息图 PNG 渲染所需的驱动。成功时不会出现红色错误。渲染任务使用独立后台浏览器，不依赖知乎登录；知乎页面辅助模式仍只使用用户明确配置的本机目录。
 
 ### 5. 启动全部开发服务
 
@@ -218,15 +227,42 @@ DEEPSEEK_OUTPUT_COST_PER_MILLION=
 
 打开“草稿审核”后，中间栏提供：
 
-- 信息图结构化文案；
+- 有长度限制的信息图结构化文案；
+- “知识总结卡 / 观点对比表”模板；
+- 标题、结论、共识、分歧、条件和建议编辑、删除与拖动排序；
+- 字号、画布、品牌、页脚、背景位置和缩放；
 - 生成和重新生成图片 Prompt；
 - 复制中文或英文 Prompt；
 - 推荐尺寸、比例和负面约束；
 - 上传、替换或移除手动生成图片；
 - 纯 CSS 背景开关；
-- Prompt 和上传图片历史版本。
+- Prompt 和上传图片历史版本；
+- Playwright PNG 渲染、溢出提示、HTML 快照、日志和下载。
 
 上传图片保存在本机 `data/uploads/images/`，该目录已被 Git 忽略，不会提交到仓库。
+
+## 发布中心与安全确认
+
+“发布中心”分为“内容准备 / 发布日历 / 发布记录”：
+
+1. 文章必须先通过人工草稿审核；
+2. 信息图必须成功渲染；
+3. 排期时冻结当前文章版本和图片版本；
+4. 同一天不能超过发布上限，相邻排期必须满足最小间隔；
+5. 真正执行前必须输入 `确认发布`；
+6. 人工模式只准备发布包，不会替用户在知乎提交；
+7. 浏览器辅助模式遇到目录缺失、未登录、验证码、风控或页面不可识别会立即暂停并记录。
+
+“立即执行今日计划”和 Worker 的定时检查调用同一个计划服务，因此选题配额、回答上限和并发设置不会出现两套逻辑。自动生产、自动发布默认都是关闭的。
+
+## Prompt、费用和缓存
+
+- `/prompts` 管理所有文本 Prompt；保存只新增版本，不覆盖历史；
+- 可以测试指定版本、切换活动版本和回滚；
+- `/api/model-usage` 汇总今日调用数、Token、费用、缓存命中、备用模型和重试；
+- `DAILY_MODEL_BUDGET` 大于 0 时可配合超预算暂停；
+- 结构化响应缓存默认开启，缓存命中仍留下用量记录，但 Token 和费用为 0；
+- DeepSeek 主模型失败后最多尝试三次，再按配置尝试一次备用文本模型。
 
 ## 常见问题
 
@@ -272,7 +308,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-成功时会显示当前 revision `20260724_0002 (head)`。不要直接删除有业务数据的数据库文件。
+成功时会显示当前 revision `20260724_0003 (head)`。不要直接删除有业务数据的数据库文件。
 
 ## 安全边界
 
@@ -297,6 +333,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 | Alembic | 数据库迁移 | MIT |
 | Redis 官方容器 | 队列和 Pub/Sub | 以所用 Redis 版本官方授权为准 |
 | Microsoft Playwright | 本地已登录浏览器采集降级 | Apache-2.0 |
+| Pillow | 本地生成上传背景缩略图 | MIT-CMU |
 
 完整依赖和精确版本以 `requirements*.txt`、`frontend/package-lock.json` 和已安装包许可证文件为准。后续阶段若借鉴规格列出的 GitHub 项目，必须先记录项目、版本和许可证；无明确许可证时只参考思路并自行重写。
 
@@ -305,7 +342,10 @@ Get-Content .\logs\worker-error.log -Tail 100
 - [仓库分析](docs/architecture/repository-analysis.md)
 - [第一阶段实施计划](docs/architecture/phase-1-implementation-plan.md)
 - [第二阶段实施计划](docs/architecture/phase-2-implementation-plan.md)
+- [第三阶段实施计划](docs/architecture/phase-3-implementation-plan.md)
 - [数据库迁移方案](docs/architecture/database-migration-plan.md)
 - [产品设计简报](docs/design/product-design-brief.md)
 - [第一阶段进度](docs/progress/phase-1.md)
 - [第二阶段进度](docs/progress/phase-2.md)
+- [第三阶段进度](docs/progress/phase-3.md)
+- [第三阶段设计验收](design-qa.md)

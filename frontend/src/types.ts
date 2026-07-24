@@ -241,10 +241,30 @@ export interface ImageVersion {
     suggested_size?: string;
     aspect_ratio?: string;
     negative_constraints?: string[];
+    visual_keywords?: string[];
+    source_cluster_ids?: string[];
+    source_answer_ids?: string[];
+    template_type?: "knowledge_card" | "comparison_table";
+    canvas_size?: "1080x1440" | "1242x1660";
+    font_scale?: number;
+    brand_name?: string;
+    footer_text?: string;
+    background_position_x?: number;
+    background_position_y?: number;
+    background_scale?: number;
   };
   prompt_zh: string;
   prompt_en: string;
   background_url: string | null;
+  thumbnail_url: string | null;
+  rendered_url: string | null;
+  download_url: string | null;
+  html_snapshot_available: boolean;
+  render_status: string;
+  canvas_width: number;
+  canvas_height: number;
+  overflow: Array<Record<string, unknown>>;
+  render_log: Array<{ at: string; level: string; message: string }>;
   uploaded_name: string | null;
   content_type: string | null;
   byte_size: number;
@@ -261,6 +281,164 @@ export interface ImageWorkspace {
   use_css_background: boolean;
   current: ImageVersion | null;
   versions: ImageVersion[];
+  templates: Array<{
+    id: string;
+    name: string;
+    template_type: "knowledge_card" | "comparison_table";
+    schema_json: Record<string, unknown>;
+    enabled: boolean;
+  }>;
+}
+
+export interface InfographicContent {
+  title: string;
+  one_line_conclusion: string;
+  consensus: Array<{ title: string; description: string }>;
+  disagreements: string[];
+  conditions: string[];
+  suggestions: string[];
+  visual_keywords: string[];
+  source_cluster_ids: string[];
+  source_answer_ids: string[];
+}
+
+export interface PublishReadiness {
+  draft_id: string;
+  ready: boolean;
+  article_approved: boolean;
+  article_version_id: string | null;
+  article_version: number | null;
+  image_rendered: boolean;
+  image_version_id: string | null;
+  image_version: number | null;
+  risk_level: string;
+  blockers: string[];
+  warnings: string[];
+}
+
+export interface PublishSchedule {
+  id: string;
+  article_draft_id: string;
+  article_title: string;
+  article_version_id: string | null;
+  article_version: number | null;
+  image_version_id: string | null;
+  image_version: number | null;
+  scheduled_for: string;
+  mode: "manual" | "assisted";
+  status: string;
+  requires_confirmation: boolean;
+  sort_order: number;
+  interval_minutes: number;
+  conflict_state: { has_conflict?: boolean; messages?: string[] };
+  confirmed_at: string | null;
+  confirmed_by: string | null;
+  executed_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublishRecord {
+  id: string;
+  schedule_id: string | null;
+  article_version_id: string | null;
+  image_version_id: string | null;
+  status: string;
+  final_url: string | null;
+  error_message: string | null;
+  screenshot_url: string | null;
+  attempt_count: number;
+  details: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface DailyPlan {
+  id: string;
+  plan_date: string;
+  question_limit: number;
+  hot_quota: number;
+  manual_quota: number;
+  status: string;
+  execute_time: string;
+  max_concurrency: number;
+  max_answers: number;
+  daily_publish_limit: number;
+  publish_interval_minutes: number;
+  auto_production: boolean;
+  auto_publish: boolean;
+  last_executed_at: string | null;
+  result: Record<string, unknown>;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface UsageBreakdown {
+  key: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+}
+
+export interface ModelUsageOverview {
+  date: string;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  daily_budget: number;
+  budget_remaining: number | null;
+  budget_exceeded: boolean;
+  cache_hits: number;
+  fallback_calls: number;
+  retries: number;
+  manual_image_generations: number;
+  by_stage: UsageBreakdown[];
+  by_question: UsageBreakdown[];
+}
+
+export interface PromptVersion {
+  id: string;
+  version: number;
+  content: string;
+  variables: string[];
+  model_role: "fast_text_model" | "reasoning_model" | "fallback_text_model";
+  parameters: Record<string, unknown>;
+  is_active: boolean;
+  test_input: Record<string, unknown>;
+  test_output: string;
+  change_note: string;
+  created_by: string;
+  created_at: string;
+}
+
+export interface PromptTemplate {
+  id: string;
+  key: string;
+  name: string;
+  description: string;
+  active_version: number;
+  version_count: number;
+  active: PromptVersion | null;
+}
+
+export interface BrowserSafetyState {
+  adapter: string;
+  state: string;
+  safe_to_continue: boolean;
+  message: string;
+  profile_configured: boolean;
+  screenshot_url: string | null;
+}
+
+export interface OpenSourceReference {
+  id: string;
+  name: string;
+  version: string;
+  license_name: string;
+  source_url: string;
+  usage_note: string;
+  created_at: string;
 }
 
 export interface DraftVersion {
@@ -301,8 +479,19 @@ export interface PublicSettings {
   image_generation_mode: string;
   allow_manual_image_upload: boolean;
   daily_question_limit: number;
+  hot_question_quota: number;
+  manual_question_quota: number;
+  max_answers_per_question: number;
   max_ai_concurrency: number;
   request_timeout_seconds: number;
+  daily_plan_time: string;
+  daily_publish_limit: number;
+  publish_interval_minutes: number;
+  auto_production_enabled: boolean;
+  auto_publish_enabled: boolean;
+  daily_model_budget: number;
+  pause_on_budget_exceeded: boolean;
+  response_cache_enabled: boolean;
   browser_user_data_dir: string;
   redis_url_display: string;
 }

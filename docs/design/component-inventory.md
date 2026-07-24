@@ -25,6 +25,14 @@
 | `AnswerExplorer` | 回答列表、质量分、纳入状态、展开正文和来源链接 |
 | `OpinionMapPanel` | 共识、分歧、少数派、条件、风险、建议和来源抽屉 |
 | `ImagePromptWorkspace` | 信息图文案、中文/英文 Prompt、复制、上传、纯 CSS 和历史版本 |
+| `InfographicEditor` | 模板、画布、文案、排序、字体、品牌、页脚、背景裁切和版本保存 |
+| `InfographicPreview` | 按最终比例预览知识总结卡和观点对比表 |
+| `OverflowInspector` | 字段长度、DOM 溢出、渲染日志和定位提示 |
+| `PublishReadinessTable` | 固定文章/图片版本、审核和风险状态 |
+| `PublishCalendar` | 月历排期、拖拽改期、顺序和冲突 |
+| `PublishRecordTable` | 执行状态、最终链接、失败原因、截图和重试 |
+| `PromptWorkbench` | Prompt 版本、测试、启用、回滚和审计 |
+| `CostOverview` | 今日、问题、阶段、预算、缓存和降级 |
 
 ## 输入与操作
 
@@ -37,6 +45,9 @@
 | `RetryButton` | 只在可重试状态可用并解释禁用原因 |
 | `SettingsForm` | 非敏感配置编辑 |
 | `ModelTestPanel` | Provider 测试输入和结构化结果 |
+| `ScheduleModal` | 日期、时间、顺序、间隔、方式和版本确认 |
+| `PublishConfirmation` | 强制确认文本、发布范围和安全检查 |
+| `BrowserSessionCheck` | 浏览器目录、登录、验证码和页面识别状态 |
 
 ## 状态反馈
 

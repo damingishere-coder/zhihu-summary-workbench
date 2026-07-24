@@ -4,6 +4,7 @@ import {
   DashboardOutlined,
   DatabaseOutlined,
   FileDoneOutlined,
+  ExperimentOutlined,
   MoonOutlined,
   SettingOutlined,
   SunOutlined,
@@ -24,6 +25,7 @@ function selectedMenuKey(pathname: string) {
   if (pathname.startsWith("/tasks")) return "/tasks";
   if (pathname.startsWith("/drafts")) return "/drafts";
   if (pathname.startsWith("/publish")) return "/publish";
+  if (pathname.startsWith("/prompts")) return "/prompts";
   if (pathname.startsWith("/settings")) return "/settings";
   return "/dashboard";
 }
@@ -49,6 +51,7 @@ export function AppShell() {
       { key: "/tasks", icon: <UnorderedListOutlined />, label: "任务中心" },
       { key: "/drafts", icon: <FileDoneOutlined />, label: "草稿审核" },
       { key: "/publish", icon: <CalendarOutlined />, label: "发布中心" },
+      { key: "/prompts", icon: <ExperimentOutlined />, label: "Prompt 管理" },
       { key: "/settings", icon: <SettingOutlined />, label: "设置" },
     ],
     [],

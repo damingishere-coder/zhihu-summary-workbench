@@ -31,6 +31,9 @@ class ProviderUsage:
     output_tokens: int = 0
     duration_ms: int = 0
     estimated_cost: float = 0
+    cache_hit: bool = False
+    fallback_used: bool = False
+    retry_count: int = 0
 
 
 @dataclass(slots=True)
@@ -74,4 +77,3 @@ class ImageGenerationProvider(ABC):
     @abstractmethod
     def capability(self) -> BaseModel:
         raise NotImplementedError
-

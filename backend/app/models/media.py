@@ -46,6 +46,19 @@ class ImageVersion(Base, UuidPrimaryKeyMixin):
     prompt_en: Mapped[str] = mapped_column(Text, default="")
     background_path: Mapped[str | None] = mapped_column(String(1000))
     rendered_path: Mapped[str | None] = mapped_column(String(1000))
+    thumbnail_path: Mapped[str | None] = mapped_column(String(1000))
+    html_snapshot_path: Mapped[str | None] = mapped_column(String(1000))
+    render_status: Mapped[str] = mapped_column(
+        String(32), default="not_rendered"
+    )
+    canvas_width: Mapped[int] = mapped_column(Integer, default=1080)
+    canvas_height: Mapped[int] = mapped_column(Integer, default=1440)
+    overflow_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
+    render_log_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     workflow_mode: Mapped[str] = mapped_column(
         String(64), default="copy_prompt_and_upload"
     )
@@ -65,12 +78,26 @@ class PublishSchedule(Base, UuidPrimaryKeyMixin, TimestampMixin):
     article_draft_id: Mapped[str] = mapped_column(
         ForeignKey("article_drafts.id", ondelete="RESTRICT"), index=True
     )
+    article_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("article_versions.id", ondelete="RESTRICT"), index=True
+    )
+    image_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("image_versions.id", ondelete="RESTRICT"), index=True
+    )
     scheduled_for: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), index=True
     )
     mode: Mapped[str] = mapped_column(String(32), default="manual")
     status: Mapped[str] = mapped_column(String(32), default="scheduled")
     requires_confirmation: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    conflict_state: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    confirmed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    confirmed_by: Mapped[str | None] = mapped_column(String(128))
+    executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class PublishRecord(Base, UuidPrimaryKeyMixin):
@@ -79,9 +106,17 @@ class PublishRecord(Base, UuidPrimaryKeyMixin):
     schedule_id: Mapped[str | None] = mapped_column(
         ForeignKey("publish_schedules.id", ondelete="SET NULL")
     )
+    article_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("article_versions.id", ondelete="SET NULL")
+    )
+    image_version_id: Mapped[str | None] = mapped_column(
+        ForeignKey("image_versions.id", ondelete="SET NULL")
+    )
     status: Mapped[str] = mapped_column(String(32))
     final_url: Mapped[str | None] = mapped_column(String(1000))
     error_message: Mapped[str | None] = mapped_column(Text)
+    screenshot_path: Mapped[str | None] = mapped_column(String(1000))
+    attempt_count: Mapped[int] = mapped_column(Integer, default=1)
     details: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now

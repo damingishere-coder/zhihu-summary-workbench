@@ -13,6 +13,7 @@ from backend.app.schemas.analysis import (
     OpinionMapData,
 )
 from backend.app.schemas.draft import DraftRewriteResult
+from backend.app.schemas.image import InfographicContentData
 
 
 QUALITY_SYSTEM_PROMPT = """你是回答质量筛选器。请批量判断每条回答与问题的相关性、
@@ -43,16 +44,27 @@ REVIEW_SYSTEM_PROMPT = """你是独立文章质量审核器，不参与文章生
 REWRITE_SYSTEM_PROMPT = """你是知乎总结草稿的局部编辑器。只重写用户提供的原文，不补充外部事实，
 不改变数字、来源含义和风险边界，不虚构经历。根据 instruction 改善表达并只返回重写后的正文。"""
 
+INFOGRAPHIC_SYSTEM_PROMPT = """你是信息图文案编辑。只基于输入观点地图和观点簇压缩文案，
+不得补充外部事实、数字或来源。标题不超过 48 字，一句话结论不超过 96 字；
+共识最多 4 项，每项标题不超过 28 字、说明不超过 110 字；
+分歧、条件和建议各最多 4 项且每项不超过 96 字。中文必须自然、准确、适合竖版信息图。
+source_cluster_ids 和 source_answer_ids 只能使用输入中提供的 ID。"""
+
 
 class AnswerQualityService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = QUALITY_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def evaluate_batch(
         self, *, question_title: str, answers: list[dict[str, Any]]
     ) -> StructuredProviderResult[AnswerQualityBatch]:
         return await self.provider.generate_structured(
-            system_prompt=QUALITY_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {"question_title": question_title, "answers": answers},
@@ -64,14 +76,19 @@ class AnswerQualityService:
 
 
 class AnswerClaimBatchService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = CLAIM_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def extract_batch(
         self, *, question_title: str, answers: list[dict[str, Any]]
     ) -> StructuredProviderResult[AnswerClaimBatch]:
         return await self.provider.generate_structured(
-            system_prompt=CLAIM_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {"question_title": question_title, "answers": answers},
@@ -83,14 +100,19 @@ class AnswerClaimBatchService:
 
 
 class ClusterRefinementService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = CLUSTER_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def refine(
         self, *, question_title: str, rough_clusters: list[dict[str, Any]]
     ) -> StructuredProviderResult[ClusterRefinement]:
         return await self.provider.generate_structured(
-            system_prompt=CLUSTER_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {
@@ -105,14 +127,19 @@ class ClusterRefinementService:
 
 
 class OpinionMapGenerationService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = OPINION_MAP_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def generate(
         self, *, question_title: str, clusters: list[dict[str, Any]]
     ) -> StructuredProviderResult[OpinionMapData]:
         return await self.provider.generate_structured(
-            system_prompt=OPINION_MAP_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {"question_title": question_title, "clusters": clusters},
@@ -124,8 +151,13 @@ class OpinionMapGenerationService:
 
 
 class ArticleGenerationService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = ARTICLE_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def generate(
         self,
@@ -136,7 +168,7 @@ class ArticleGenerationService:
         target_length: int,
     ) -> StructuredProviderResult[ArticleGeneration]:
         return await self.provider.generate_structured(
-            system_prompt=ARTICLE_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {
@@ -153,8 +185,13 @@ class ArticleGenerationService:
 
 
 class ArticleReviewService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = REVIEW_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def review(
         self,
@@ -164,7 +201,7 @@ class ArticleReviewService:
         opinion_map: dict[str, Any],
     ) -> StructuredProviderResult[ArticleQualityReview]:
         return await self.provider.generate_structured(
-            system_prompt=REVIEW_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {
@@ -180,8 +217,13 @@ class ArticleReviewService:
 
 
 class DraftRewriteService:
-    def __init__(self, provider: StructuredOutputProvider):
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = REWRITE_SYSTEM_PROMPT,
+    ):
         self.provider = provider
+        self.system_prompt = system_prompt
 
     async def rewrite(
         self,
@@ -192,7 +234,7 @@ class DraftRewriteService:
         instruction: str,
     ) -> StructuredProviderResult[DraftRewriteResult]:
         return await self.provider.generate_structured(
-            system_prompt=REWRITE_SYSTEM_PROMPT,
+            system_prompt=self.system_prompt,
             user_prompt="输入 JSON：\n"
             + json.dumps(
                 {
@@ -205,5 +247,39 @@ class DraftRewriteService:
                 ensure_ascii=False,
             ),
             output_schema=DraftRewriteResult,
+            model_role="fast_text_model",
+        )
+
+
+class InfographicContentService:
+    def __init__(
+        self,
+        provider: StructuredOutputProvider,
+        system_prompt: str = INFOGRAPHIC_SYSTEM_PROMPT,
+    ):
+        self.provider = provider
+        self.system_prompt = system_prompt
+
+    async def generate(
+        self,
+        *,
+        question_title: str,
+        opinion_map: dict[str, Any],
+        clusters: list[dict[str, Any]],
+        template_type: str,
+    ) -> StructuredProviderResult[InfographicContentData]:
+        return await self.provider.generate_structured(
+            system_prompt=self.system_prompt,
+            user_prompt="输入 JSON：\n"
+            + json.dumps(
+                {
+                    "question_title": question_title,
+                    "opinion_map": opinion_map,
+                    "clusters": clusters,
+                    "template_type": template_type,
+                },
+                ensure_ascii=False,
+            ),
+            output_schema=InfographicContentData,
             model_role="fast_text_model",
         )

@@ -8,9 +8,11 @@ from backend.app.ai.services.content import (
     ARTICLE_SYSTEM_PROMPT,
     CLAIM_SYSTEM_PROMPT,
     CLUSTER_SYSTEM_PROMPT,
+    INFOGRAPHIC_SYSTEM_PROMPT,
     OPINION_MAP_SYSTEM_PROMPT,
     QUALITY_SYSTEM_PROMPT,
     REVIEW_SYSTEM_PROMPT,
+    REWRITE_SYSTEM_PROMPT,
 )
 from backend.app.models.core import (
     OpenSourceReference,
@@ -18,6 +20,7 @@ from backend.app.models.core import (
     PromptVersion,
     SystemSetting,
 )
+from backend.app.models.media import ImageTemplate
 from backend.app.services.settings import SETTING_DEFAULTS
 
 
@@ -51,6 +54,12 @@ OPEN_SOURCE_REFERENCES = (
         "Apache-2.0",
         "https://github.com/microsoft/playwright",
         "第二阶段使用用户本地已登录 Chrome 会话作为知乎采集安全降级模式。",
+    ),
+    (
+        "Pillow",
+        "MIT-CMU",
+        "https://github.com/python-pillow/Pillow",
+        "第三阶段仅用于为用户上传的背景原图生成本地缩略图。",
     ),
 )
 
@@ -107,6 +116,48 @@ PHASE_TWO_PROMPTS = (
 )
 
 
+PHASE_THREE_PROMPTS = (
+    (
+        "infographic_content_generation",
+        "信息图文案生成",
+        "第三阶段将观点地图压缩为有长度限制的中文信息图 JSON。",
+        INFOGRAPHIC_SYSTEM_PROMPT,
+        ["question_title", "opinion_map", "clusters", "template_type"],
+        "fast_text_model",
+    ),
+    (
+        "draft_rewrite",
+        "草稿局部改写",
+        "第三阶段草稿审核中的段落或选中文本改写。",
+        REWRITE_SYSTEM_PROMPT,
+        ["question_title", "scope", "text", "instruction"],
+        "fast_text_model",
+    ),
+)
+
+
+IMAGE_TEMPLATES = (
+    (
+        "知识总结卡",
+        "knowledge_card",
+        {
+            "description": "适合一般知识总结，突出一句话结论、共识、条件和建议。",
+            "canvas_sizes": ["1080x1440", "1242x1660"],
+            "reserved": False,
+        },
+    ),
+    (
+        "观点对比表",
+        "comparison_table",
+        {
+            "description": "适合支持/反对、A/B 或存在明显分歧的问题。",
+            "canvas_sizes": ["1080x1440", "1242x1660"],
+            "reserved": False,
+        },
+    ),
+)
+
+
 async def seed_defaults(session: AsyncSession) -> None:
     for key, value in SETTING_DEFAULTS.items():
         if not await session.get(SystemSetting, key):
@@ -135,7 +186,10 @@ async def seed_defaults(session: AsyncSession) -> None:
             )
         )
 
-    for key, name, description, content, variables, model_role in PHASE_TWO_PROMPTS:
+    for key, name, description, content, variables, model_role in (
+        *PHASE_TWO_PROMPTS,
+        *PHASE_THREE_PROMPTS,
+    ):
         existing = await session.scalar(
             select(PromptTemplate).where(PromptTemplate.key == key)
         )
@@ -160,19 +214,47 @@ async def seed_defaults(session: AsyncSession) -> None:
             )
         )
 
-    existing_names = set(
+    existing_template_types = set(
         (
             await session.scalars(
-                select(OpenSourceReference.name).where(
+                select(ImageTemplate.template_type).where(
+                    ImageTemplate.template_type.in_(
+                        [item[1] for item in IMAGE_TEMPLATES]
+                    )
+                )
+            )
+        ).all()
+    )
+    for name, template_type, schema_json in IMAGE_TEMPLATES:
+        if template_type not in existing_template_types:
+            session.add(
+                ImageTemplate(
+                    name=name,
+                    template_type=template_type,
+                    schema_json=schema_json,
+                    enabled=True,
+                )
+            )
+
+    existing_references = {
+        item.name: item
+        for item in (
+            await session.scalars(
+                select(OpenSourceReference).where(
                     OpenSourceReference.name.in_(
                         [item[0] for item in OPEN_SOURCE_REFERENCES]
                     )
                 )
             )
         ).all()
-    )
+    }
     for name, license_name, source_url, usage_note in OPEN_SOURCE_REFERENCES:
-        if name not in existing_names:
+        existing = existing_references.get(name)
+        if existing:
+            existing.license_name = license_name
+            existing.source_url = source_url
+            existing.usage_note = usage_note
+        else:
             session.add(
                 OpenSourceReference(
                     name=name,

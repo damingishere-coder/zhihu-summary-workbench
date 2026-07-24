@@ -32,8 +32,8 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.1.0",
-        description="知乎问题总结工作台第二阶段 API",
+        version="0.3.0",
+        description="知乎问题总结工作台第三阶段 API",
         lifespan=lifespan,
     )
     app.add_middleware(

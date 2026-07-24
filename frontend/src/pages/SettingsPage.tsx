@@ -5,8 +5,10 @@ import {
   DatabaseOutlined,
   FolderOpenOutlined,
   PictureOutlined,
+  SafetyCertificateOutlined,
   SaveOutlined,
   ThunderboltOutlined,
+  HistoryOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -85,6 +87,11 @@ export function SettingsPage({
           { value: "ai", label: "AI 与模型", icon: <ApiOutlined /> },
         ]}
       />
+      <Space wrap className="settings-shortcuts">
+        <Button icon={<HistoryOutlined />} onClick={() => navigate("/prompts")}>Prompt 版本管理</Button>
+        <Button icon={<SafetyCertificateOutlined />} onClick={() => navigate("/settings/browser")}>浏览器安全设置</Button>
+        <Button onClick={() => navigate("/settings/open-source")}>开源组件与许可证</Button>
+      </Space>
       {query.isLoading && <LoadingBlock rows={14} />}
       {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
       {query.data && section === "general" && (
@@ -109,7 +116,31 @@ export function SettingsPage({
               <Form.Item name="request_timeout_seconds" label="请求超时" rules={[{ required: true }]}>
                 <InputNumber min={5} max={600} suffix="秒" />
               </Form.Item>
+              <Form.Item name="hot_question_quota" label="热门问题配额" rules={[{ required: true }]}>
+                <InputNumber min={0} max={100} suffix="个" />
+              </Form.Item>
+              <Form.Item name="manual_question_quota" label="手动问题配额" rules={[{ required: true }]}>
+                <InputNumber min={0} max={100} suffix="个" />
+              </Form.Item>
+              <Form.Item name="max_answers_per_question" label="单题最大回答数" rules={[{ required: true }]}>
+                <InputNumber min={1} max={500} suffix="条" />
+              </Form.Item>
+              <Form.Item name="daily_plan_time" label="每日执行时间" rules={[{ required: true }]}>
+                <Input placeholder="09:00" />
+              </Form.Item>
+              <Form.Item name="daily_publish_limit" label="每日发布上限" rules={[{ required: true }]}>
+                <InputNumber min={1} max={100} suffix="篇" />
+              </Form.Item>
+              <Form.Item name="publish_interval_minutes" label="最小发布间隔" rules={[{ required: true }]}>
+                <InputNumber min={5} max={1440} suffix="分钟" />
+              </Form.Item>
             </div>
+            <Alert
+              type="info"
+              showIcon
+              title="自动开关保持关闭"
+              description={`自动生产：${query.data.auto_production_enabled ? "已开启" : "关闭"}；自动发布：${query.data.auto_publish_enabled ? "已开启" : "关闭"}。如需开启，应先完成浏览器安全测试和发布回归。`}
+            />
           </section>
           <section className="settings-section">
             <div className="settings-section__heading">
@@ -192,6 +223,17 @@ export function SettingsPage({
                 <Form.Item name="fast_text_model" label="快速文本模型"><Input /></Form.Item>
                 <Form.Item name="reasoning_model" label="推理模型"><Input /></Form.Item>
                 <Form.Item name="fallback_text_model" label="备用文本模型"><Input /></Form.Item>
+              </div>
+              <div className="settings-fields settings-fields--three">
+                <Form.Item name="daily_model_budget" label="每日模型预算（0 表示不限）">
+                  <InputNumber min={0} max={1000000} precision={2} prefix="¥" />
+                </Form.Item>
+                <Form.Item name="pause_on_budget_exceeded" label="超预算自动暂停">
+                  <Radio.Group options={[{ label: "开启", value: true }, { label: "关闭", value: false }]} />
+                </Form.Item>
+                <Form.Item name="response_cache_enabled" label="结构化响应缓存">
+                  <Radio.Group options={[{ label: "开启", value: true }, { label: "关闭", value: false }]} />
+                </Form.Item>
               </div>
               <Space>
                 <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={save.isPending}>

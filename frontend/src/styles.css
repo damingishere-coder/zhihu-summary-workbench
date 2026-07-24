@@ -984,6 +984,253 @@ a:focus-visible,
   margin-bottom: 12px;
 }
 
+.image-workspace-empty {
+  display: grid;
+  gap: 14px;
+  justify-items: center;
+  padding: 22px 0 8px;
+}
+
+.infographic-preview {
+  aspect-ratio: 3 / 4;
+  width: min(100%, 330px);
+  margin: 12px auto;
+  overflow: hidden;
+  color: #172033;
+  background-color: #f5f7fa;
+  background-position: center;
+  background-size: cover;
+  border: 1px solid #dce3ec;
+  box-shadow: 0 8px 24px rgb(15 23 42 / 8%);
+}
+
+.infographic-preview__veil {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  height: 100%;
+  padding: 20px;
+  background: rgb(247 249 252 / 88%);
+}
+
+.infographic-preview header {
+  padding-top: 10px;
+  border-top: 4px solid #1769e0;
+}
+
+.infographic-preview header small {
+  color: #1769e0;
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.infographic-preview header h2 {
+  margin: 7px 0;
+  font-size: 20px;
+  line-height: 1.3;
+}
+
+.infographic-preview header p {
+  margin: 0;
+  padding: 8px 10px;
+  color: #123a72;
+  background: #e9f2ff;
+  border-left: 3px solid #1769e0;
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.infographic-preview__columns,
+.infographic-preview__details {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.infographic-preview__details {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.infographic-preview section {
+  padding: 8px;
+  background: rgb(255 255 255 / 94%);
+  border: 1px solid #dce3ec;
+}
+
+.infographic-preview section > strong {
+  display: block;
+  margin-bottom: 5px;
+  color: #153b6b;
+  font-size: 9px;
+}
+
+.infographic-preview article {
+  display: grid;
+  gap: 2px;
+  margin-bottom: 5px;
+  padding: 6px;
+  background: #f2f6fb;
+  border-left: 2px solid #15805d;
+  font-size: 7px;
+  line-height: 1.45;
+}
+
+.infographic-preview article b {
+  font-size: 8px;
+}
+
+.infographic-preview ul {
+  margin: 0;
+  padding-left: 12px;
+  font-size: 7px;
+  line-height: 1.55;
+}
+
+.infographic-preview footer {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 7px;
+  color: #667085;
+  border-top: 1px solid #dce3ec;
+  font-size: 6px;
+}
+
+.image-workspace-summary {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 12px;
+  color: var(--wb-text-secondary);
+  font-size: 10px;
+}
+
+.infographic-editor-drawer .ant-drawer-body {
+  padding: 16px 20px;
+  background: var(--wb-bg);
+}
+
+.infographic-editor-layout {
+  display: grid;
+  grid-template-columns: minmax(380px, 0.9fr) minmax(420px, 1.1fr);
+  gap: 16px;
+  min-height: calc(100vh - 110px);
+}
+
+.infographic-editor-controls,
+.infographic-editor-preview {
+  padding: 16px;
+  background: var(--wb-surface);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+}
+
+.infographic-editor-controls {
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+}
+
+.infographic-control-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.infographic-control-stack > label {
+  margin-top: 4px;
+  color: var(--wb-text);
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.info-list-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 12px;
+  background: var(--wb-surface-subtle);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+}
+
+.info-list-editor__heading {
+  display: flex;
+  justify-content: space-between;
+  color: var(--wb-text-secondary);
+  font-size: 11px;
+}
+
+.info-list-editor__heading strong {
+  color: var(--wb-text);
+}
+
+.info-list-editor__row {
+  display: grid;
+  grid-template-columns: 18px 1fr 30px;
+  gap: 7px;
+  align-items: center;
+}
+
+.info-list-editor__row > .anticon,
+.consensus-editor-row > .anticon {
+  color: var(--wb-text-secondary);
+  cursor: grab;
+}
+
+.consensus-editor-row {
+  display: grid;
+  grid-template-columns: 18px 1fr 30px;
+  gap: 7px;
+  align-items: start;
+}
+
+.consensus-editor-fields {
+  display: grid;
+  grid-column: 2;
+  gap: 7px;
+  min-width: 0;
+}
+
+.consensus-editor-row > .ant-btn {
+  grid-column: 3;
+  grid-row: 1;
+}
+
+.infographic-editor-preview {
+  position: sticky;
+  top: 0;
+  align-self: start;
+}
+
+.infographic-editor-preview > .infographic-preview {
+  width: min(100%, 560px);
+  max-height: calc(100vh - 260px);
+}
+
+.infographic-editor-preview__heading,
+.infographic-editor-preview__heading > div {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.infographic-editor-preview__heading span {
+  color: var(--wb-text-secondary);
+  font-size: 10px;
+}
+
+.infographic-editor-preview > .ant-alert,
+.infographic-editor-preview > .ant-btn {
+  margin-top: 10px;
+}
+
+.image-version-list--actions > div {
+  grid-template-columns: 36px 1fr auto auto;
+}
+
 .prompt-toolbar {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
@@ -1234,6 +1481,98 @@ a:focus-visible,
   margin-bottom: 18px;
 }
 
+.publish-stat-strip {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+
+.publish-stat-strip .ant-statistic {
+  padding: 16px 18px;
+  background: var(--wb-surface);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+}
+
+.publish-stat-strip .ant-statistic-title {
+  font-size: 11px;
+}
+
+.publish-stat-strip .ant-statistic-content {
+  font-size: 22px;
+}
+
+.publish-workspace {
+  padding: 0 18px 18px;
+}
+
+.publish-blocker {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--wb-warning);
+  font-size: 10px;
+  line-height: 16px;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.publish-calendar .ant-picker-calendar-date {
+  min-height: 108px !important;
+}
+
+.publish-calendar-cell {
+  min-height: 76px;
+}
+
+.publish-calendar-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 5px;
+  width: 100%;
+  margin-bottom: 4px;
+  padding: 4px 5px;
+  overflow: hidden;
+  color: var(--wb-text);
+  text-align: left;
+  background: var(--wb-surface-subtle);
+  border: 1px solid var(--wb-border);
+  border-left: 3px solid var(--wb-primary);
+  border-radius: 3px;
+  cursor: grab;
+}
+
+.publish-calendar-item span,
+.publish-calendar-item b {
+  overflow: hidden;
+  font-size: 8px;
+  line-height: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.publish-calendar-item b {
+  font-weight: 600;
+}
+
+.publish-calendar-item .status-tag {
+  grid-column: 1 / -1;
+  width: fit-content;
+  margin: 0;
+  font-size: 7px;
+}
+
+.modal-field-label {
+  display: block;
+  margin: 16px 0 7px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.publish-frozen-versions {
+  margin-top: 16px;
+}
+
 .section-caption {
   color: var(--wb-text-secondary);
   font-size: 11px;
@@ -1241,6 +1580,127 @@ a:focus-visible,
 
 .settings-segmented {
   margin-bottom: 16px;
+}
+
+.settings-shortcuts {
+  margin: 0 0 16px;
+}
+
+.prompt-manager-layout {
+  display: grid;
+  grid-template-columns: 220px minmax(420px, 1fr) minmax(340px, 0.8fr);
+  gap: 14px;
+  align-items: start;
+}
+
+.prompt-template-list,
+.prompt-editor,
+.prompt-test-panel {
+  padding: 16px;
+}
+
+.prompt-template-list {
+  display: grid;
+  gap: 6px;
+}
+
+.prompt-template-item {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 4px 8px;
+  width: 100%;
+  padding: 10px;
+  color: var(--wb-text);
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 5px;
+  cursor: pointer;
+}
+
+.prompt-template-item:hover,
+.prompt-template-item--active {
+  background: var(--wb-surface-subtle);
+  border-color: var(--wb-border);
+}
+
+.prompt-template-item--active {
+  border-left: 3px solid var(--wb-primary);
+}
+
+.prompt-template-item span {
+  grid-column: 1;
+  overflow: hidden;
+  color: var(--wb-text-secondary);
+  font-family: "Cascadia Code", monospace;
+  font-size: 9px;
+  text-overflow: ellipsis;
+}
+
+.prompt-template-item .ant-tag {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  align-self: center;
+  margin: 0;
+}
+
+.prompt-editor,
+.prompt-test-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.prompt-editor > label,
+.prompt-test-panel > label {
+  margin-top: 4px;
+  font-size: 11px;
+  font-weight: 650;
+}
+
+.prompt-code-editor,
+.prompt-test-panel textarea,
+.prompt-test-output {
+  font-family: "Cascadia Code", "Microsoft YaHei UI", monospace;
+  font-size: 11px;
+  line-height: 19px;
+}
+
+.prompt-test-panel h2,
+.prompt-test-panel h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+}
+
+.prompt-test-panel h3 {
+  margin-top: 14px;
+  font-size: 12px;
+}
+
+.prompt-test-output {
+  max-height: 240px;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  white-space: pre-wrap;
+  background: var(--wb-surface-subtle);
+  border: 1px solid var(--wb-border);
+  border-radius: 5px;
+}
+
+.browser-settings-card {
+  display: grid;
+  gap: 14px;
+  max-width: 880px;
+}
+
+.browser-settings-card h2,
+.browser-settings-card p {
+  margin: 0;
+}
+
+.browser-settings-card p {
+  color: var(--wb-text-secondary);
+  font-size: 11px;
 }
 
 .settings-form {
@@ -1385,6 +1845,14 @@ a:focus-visible,
     min-height: 0;
     max-height: none;
   }
+
+  .prompt-manager-layout {
+    grid-template-columns: 200px minmax(0, 1fr);
+  }
+
+  .prompt-test-panel {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 1180px) {
@@ -1418,6 +1886,18 @@ a:focus-visible,
   .draft-source-panel {
     grid-column: 1 / -1;
     min-height: auto;
+  }
+
+  .publish-stat-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .infographic-editor-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .infographic-editor-preview {
+    position: static;
   }
 }
 
@@ -1454,6 +1934,22 @@ a:focus-visible,
 
   .draft-source-panel {
     grid-column: auto;
+  }
+
+  .prompt-manager-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .prompt-test-panel {
+    grid-column: auto;
+  }
+
+  .publish-workspace {
+    overflow-x: auto;
+  }
+
+  .publish-calendar {
+    min-width: 780px;
   }
 }
 
@@ -1569,6 +2065,15 @@ a:focus-visible,
 
   .cluster-editor-card__fields > * {
     width: 100%;
+  }
+
+  .publish-stat-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .infographic-editor-drawer .ant-drawer-header,
+  .infographic-editor-drawer .ant-drawer-body {
+    padding-inline: 10px;
   }
 }
 

@@ -6,11 +6,21 @@ import type {
   Draft,
   DraftVersion,
   HotQuestionFetchResult,
+  InfographicContent,
   ImageWorkspace,
   ImportResult,
   ModelTestResult,
   Paginated,
   PublicSettings,
+  PublishReadiness,
+  PublishRecord,
+  PublishSchedule,
+  DailyPlan,
+  ModelUsageOverview,
+  PromptTemplate,
+  PromptVersion,
+  BrowserSafetyState,
+  OpenSourceReference,
   Question,
   Task,
   Worker,
@@ -201,6 +211,45 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+  generateInfographicContent: (
+    draftId: string,
+    payload: {
+      template_type: "knowledge_card" | "comparison_table";
+      canvas_size: "1080x1440" | "1242x1660";
+    },
+  ) =>
+    request<ImageWorkspace>(`/drafts/${draftId}/generate-infographic-content`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updateInfographic: (
+    imageId: string,
+    payload: {
+      content: InfographicContent;
+      template_type: "knowledge_card" | "comparison_table";
+      canvas_size: "1080x1440" | "1242x1660";
+      font_scale: number;
+      brand_name: string;
+      footer_text: string;
+      background_position_x: number;
+      background_position_y: number;
+      background_scale: number;
+    },
+  ) =>
+    request<ImageWorkspace>(`/images/${imageId}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  renderInfographic: (imageId: string, version?: number) =>
+    request<ImageWorkspace>(`/images/${imageId}/render`, {
+      method: "POST",
+      body: JSON.stringify({ version: version ?? null }),
+    }),
+  restoreImageVersion: (imageId: string, version: number) =>
+    request<ImageWorkspace>(`/images/${imageId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ version }),
+    }),
   markImagePromptCopied: (imageId: string, language: "zh" | "en") =>
     request<ImageWorkspace>(`/images/${imageId}/mark-copied`, {
       method: "POST",
@@ -237,4 +286,80 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  publishReadiness: (draftId: string) =>
+    request<PublishReadiness>(`/drafts/${draftId}/publish-readiness`),
+  publishSchedules: () => request<PublishSchedule[]>("/publish-schedules"),
+  createPublishSchedule: (payload: {
+    article_draft_id: string;
+    scheduled_for: string;
+    mode: "manual" | "assisted";
+  }) =>
+    request<PublishSchedule>("/publish-schedules", {
+      method: "POST",
+      body: JSON.stringify(payload),
+    }),
+  updatePublishSchedule: (
+    id: string,
+    payload: Partial<Pick<PublishSchedule, "scheduled_for" | "mode" | "sort_order">>,
+  ) =>
+    request<PublishSchedule>(`/publish-schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  cancelPublishSchedule: (id: string) =>
+    request<PublishSchedule>(`/publish-schedules/${id}`, { method: "DELETE" }),
+  executePublishSchedule: (id: string, confirmation: string) =>
+    request<PublishRecord>(`/publish-schedules/${id}/execute`, {
+      method: "POST",
+      body: JSON.stringify({ confirmation }),
+    }),
+  publishRecords: () => request<PublishRecord[]>("/publish-records"),
+  todayPlan: () => request<DailyPlan>("/plans/today"),
+  updateTodayPlan: (payload: Partial<DailyPlan>) =>
+    request<DailyPlan>("/plans/today", {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  runTodayPlan: () =>
+    request<{ plan: DailyPlan; queued_task_ids: string[]; message: string }>(
+      "/plans/today/run",
+      { method: "POST" },
+    ),
+  modelUsage: () => request<ModelUsageOverview>("/model-usage"),
+  prompts: () => request<PromptTemplate[]>("/prompts"),
+  updatePrompt: (
+    id: string,
+    payload: {
+      content: string;
+      variables: string[];
+      model_role: PromptVersion["model_role"];
+      parameters: Record<string, unknown>;
+      change_note: string;
+    },
+  ) =>
+    request<PromptVersion>(`/prompts/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(payload),
+    }),
+  activatePrompt: (id: string, version: number, reason: string) =>
+    request<PromptTemplate>(`/prompts/${id}/activate`, {
+      method: "POST",
+      body: JSON.stringify({ version, reason }),
+    }),
+  promptVersions: (id: string) => request<PromptVersion[]>(`/prompts/${id}/versions`),
+  testPrompt: (id: string, version: number | undefined, input: Record<string, unknown>) =>
+    request<{
+      output: string;
+      provider: string;
+      model: string;
+      estimated_cost: number;
+      duration_ms: number;
+    }>(`/prompts/${id}/test`, {
+      method: "POST",
+      body: JSON.stringify({ version, input }),
+    }),
+  browserSafety: () => request<BrowserSafetyState>("/settings/browser/test"),
+  openSourceReferences: () =>
+    request<OpenSourceReference[]>("/open-source-references"),
 };

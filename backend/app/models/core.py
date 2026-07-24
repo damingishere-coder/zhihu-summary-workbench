@@ -73,6 +73,15 @@ class DailyPlan(Base, UuidPrimaryKeyMixin, TimestampMixin):
     hot_quota: Mapped[int] = mapped_column(Integer, default=6)
     manual_quota: Mapped[int] = mapped_column(Integer, default=4)
     status: Mapped[str] = mapped_column(String(32), default="pending")
+    execute_time: Mapped[str] = mapped_column(String(5), default="09:00")
+    max_concurrency: Mapped[int] = mapped_column(Integer, default=3)
+    max_answers: Mapped[int] = mapped_column(Integer, default=100)
+    daily_publish_limit: Mapped[int] = mapped_column(Integer, default=10)
+    publish_interval_minutes: Mapped[int] = mapped_column(Integer, default=30)
+    auto_production: Mapped[bool] = mapped_column(Boolean, default=False)
+    auto_publish: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_executed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
 
 
 class TaskJob(Base, UuidPrimaryKeyMixin, TimestampMixin):
@@ -161,9 +170,27 @@ class ModelUsageLog(Base, UuidPrimaryKeyMixin):
     duration_ms: Mapped[int] = mapped_column(Integer, default=0)
     status: Mapped[str] = mapped_column(String(32), default="success")
     error_message: Mapped[str | None] = mapped_column(Text)
+    stage: Mapped[str] = mapped_column(String(64), default="", index=True)
+    cache_hit: Mapped[bool] = mapped_column(Boolean, default=False)
+    fallback_used: Mapped[bool] = mapped_column(Boolean, default=False)
+    retry_count: Mapped[int] = mapped_column(Integer, default=0)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )
+
+
+class ModelResponseCache(Base, UuidPrimaryKeyMixin, TimestampMixin):
+    __tablename__ = "model_response_cache"
+
+    cache_key: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    schema_name: Mapped[str] = mapped_column(String(200), index=True)
+    provider: Mapped[str] = mapped_column(String(64), nullable=False)
+    model: Mapped[str] = mapped_column(String(128), nullable=False)
+    model_role: Mapped[str] = mapped_column(String(64), nullable=False)
+    response_json: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    hit_count: Mapped[int] = mapped_column(Integer, default=0)
 
 
 class ArticleDraft(Base, UuidPrimaryKeyMixin, TimestampMixin):
@@ -237,6 +264,17 @@ class PromptVersion(Base, UuidPrimaryKeyMixin):
         String(64), default="fast_text_model", nullable=False
     )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    parameters: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    test_input: Mapped[dict[str, Any]] = mapped_column(
+        JSON, default=dict, nullable=False
+    )
+    test_output: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    change_note: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    created_by: Mapped[str] = mapped_column(
+        String(128), default="operator", nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=utc_now, nullable=False
     )

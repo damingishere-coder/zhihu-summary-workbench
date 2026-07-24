@@ -12,9 +12,17 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.ai.providers.base import ProviderUsage
+from backend.app.ai.providers.cached import CachedStructuredProvider
 from backend.app.ai.providers.factory import create_structured_provider
 from backend.app.ai.providers.local_embedding import LocalEmbeddingProvider
 from backend.app.ai.services.content import (
+    ARTICLE_SYSTEM_PROMPT,
+    CLAIM_SYSTEM_PROMPT,
+    CLUSTER_SYSTEM_PROMPT,
+    OPINION_MAP_SYSTEM_PROMPT,
+    QUALITY_SYSTEM_PROMPT,
+    REVIEW_SYSTEM_PROMPT,
+    REWRITE_SYSTEM_PROMPT,
     AnswerClaimBatchService,
     AnswerQualityService,
     ArticleGenerationService,
@@ -51,6 +59,7 @@ from backend.app.schemas.analysis import (
     FetchAnswersRequest,
 )
 from backend.app.services.settings import configured_settings_copy, provider_mode
+from backend.app.services.prompts import get_active_prompt
 
 
 async def record_model_usage(
@@ -59,6 +68,7 @@ async def record_model_usage(
     *,
     question_id: str,
     task_id: str | None,
+    stage: str | None = None,
 ) -> None:
     session.add(
         ModelUsageLog(
@@ -72,6 +82,10 @@ async def record_model_usage(
             estimated_cost=Decimal(str(usage.estimated_cost)),
             duration_ms=usage.duration_ms,
             status="success",
+            stage=stage or usage.model_role,
+            cache_hit=usage.cache_hit,
+            fallback_used=usage.fallback_used,
+            retry_count=usage.retry_count,
         )
     )
 
@@ -233,7 +247,26 @@ async def _runtime_provider(
 ):
     runtime = await configured_settings_copy(session, settings)
     mode = await provider_mode(session, settings)
-    return create_structured_provider(mode, runtime), mode
+    provider = create_structured_provider(mode, runtime)
+    fingerprint = ":".join(
+        (
+            mode,
+            runtime.deepseek_fast_model,
+            runtime.deepseek_reasoning_model,
+            runtime.deepseek_fallback_model,
+        )
+    )
+    return (
+        CachedStructuredProvider(
+            provider,
+            session,
+            fingerprint=fingerprint,
+            cache_enabled=runtime.response_cache_enabled,
+            daily_budget=runtime.daily_model_budget,
+            pause_on_budget_exceeded=runtime.pause_on_budget_exceeded,
+        ),
+        mode,
+    )
 
 
 async def evaluate_answers(
@@ -244,7 +277,12 @@ async def evaluate_answers(
     task: TaskJob | None = None,
 ) -> dict[str, int]:
     provider, _ = await _runtime_provider(session, settings)
-    service = AnswerQualityService(provider)
+    service = AnswerQualityService(
+        provider,
+        await get_active_prompt(
+            session, "answer_quality_evaluation", QUALITY_SYSTEM_PROMPT
+        ),
+    )
     answers = (
         await session.scalars(
             select(Answer)
@@ -275,6 +313,7 @@ async def evaluate_answers(
             result.usage,
             question_id=question.id,
             task_id=task.id if task else None,
+            stage="evaluating_answers",
         )
         by_id = {item.id: item for item in batch}
         for quality in result.data.items:
@@ -324,7 +363,12 @@ async def extract_claims(
     task: TaskJob | None = None,
 ) -> dict[str, int]:
     provider, _ = await _runtime_provider(session, settings)
-    service = AnswerClaimBatchService(provider)
+    service = AnswerClaimBatchService(
+        provider,
+        await get_active_prompt(
+            session, "answer_claim_batch_extraction", CLAIM_SYSTEM_PROMPT
+        ),
+    )
     answers = (
         await session.scalars(
             select(Answer)
@@ -362,6 +406,7 @@ async def extract_claims(
             result.usage,
             question_id=question.id,
             task_id=task.id if task else None,
+            stage="extracting_claims",
         )
         by_id = {item.id: item for item in batch}
         for extracted in result.data.items:
@@ -522,7 +567,12 @@ async def refine_clusters(
     task: TaskJob | None = None,
 ) -> dict[str, int]:
     provider, _ = await _runtime_provider(session, settings)
-    service = ClusterRefinementService(provider)
+    service = ClusterRefinementService(
+        provider,
+        await get_active_prompt(
+            session, "claim_cluster_refinement", CLUSTER_SYSTEM_PROMPT
+        ),
+    )
     claims = (
         await session.scalars(
             select(Claim).where(Claim.question_id == question.id).order_by(Claim.id)
@@ -559,6 +609,7 @@ async def refine_clusters(
         result.usage,
         question_id=question.id,
         task_id=task.id if task else None,
+        stage="refining_clusters",
     )
     old_clusters = (
         await session.scalars(
@@ -735,7 +786,12 @@ async def reanalyze_cluster(
     if not question:
         raise ValueError("观点簇所属问题不存在")
     provider, _ = await _runtime_provider(session, settings)
-    result = await ClusterRefinementService(provider).refine(
+    result = await ClusterRefinementService(
+        provider,
+        await get_active_prompt(
+            session, "claim_cluster_refinement", CLUSTER_SYSTEM_PROMPT
+        ),
+    ).refine(
         question_title=question.title,
         rough_clusters=[
             {
@@ -753,6 +809,7 @@ async def reanalyze_cluster(
         result.usage,
         question_id=question.id,
         task_id=None,
+        stage="refining_clusters",
     )
     if not result.data.clusters:
         raise ValueError("局部重新分析没有返回观点簇")
@@ -793,7 +850,12 @@ async def generate_opinion_map(
             item["sort_order"],
         )
     )
-    result = await OpinionMapGenerationService(provider).generate(
+    result = await OpinionMapGenerationService(
+        provider,
+        await get_active_prompt(
+            session, "opinion_map_generation", OPINION_MAP_SYSTEM_PROMPT
+        ),
+    ).generate(
         question_title=question.title, clusters=clusters
     )
     await record_model_usage(
@@ -801,6 +863,7 @@ async def generate_opinion_map(
         result.usage,
         question_id=question.id,
         task_id=task.id if task else None,
+        stage="generating_opinion_map",
     )
     version = int(
         (
@@ -852,7 +915,12 @@ async def generate_article(
         )
     )
     provider, _ = await _runtime_provider(session, settings)
-    result = await ArticleGenerationService(provider).generate(
+    result = await ArticleGenerationService(
+        provider,
+        await get_active_prompt(
+            session, "article_generation", ARTICLE_SYSTEM_PROMPT
+        ),
+    ).generate(
         question_title=question.title,
         opinion_map=opinion.content_json,
         clusters=clusters,
@@ -863,6 +931,7 @@ async def generate_article(
         result.usage,
         question_id=question.id,
         task_id=task.id if task else None,
+        stage="generating_article",
     )
     draft = await session.scalar(
         select(ArticleDraft)
@@ -997,7 +1066,12 @@ async def review_article(
         if row.cluster_id:
             grouped[row.paragraph_id]["cluster_ids"].append(row.cluster_id)
     provider, _ = await _runtime_provider(session, settings)
-    result = await ArticleReviewService(provider).review(
+    result = await ArticleReviewService(
+        provider,
+        await get_active_prompt(
+            session, "article_quality_review", REVIEW_SYSTEM_PROMPT
+        ),
+    ).review(
         question_title=question.title,
         article={
             "title": draft.title,
@@ -1013,6 +1087,7 @@ async def review_article(
         result.usage,
         question_id=question.id,
         task_id=task.id if task else None,
+        stage="reviewing_article",
     )
     draft.review_result = result.data.model_dump()
     draft.reviewed_at = utc_now()
@@ -1035,7 +1110,12 @@ async def rewrite_draft_text(
     if not question:
         raise ValueError("草稿所属问题不存在")
     provider, _ = await _runtime_provider(session, settings)
-    result = await DraftRewriteService(provider).rewrite(
+    result = await DraftRewriteService(
+        provider,
+        await get_active_prompt(
+            session, "draft_rewrite", REWRITE_SYSTEM_PROMPT
+        ),
+    ).rewrite(
         question_title=question.title,
         scope=scope,
         text=text,
@@ -1046,6 +1126,7 @@ async def rewrite_draft_text(
         result.usage,
         question_id=question.id,
         task_id=None,
+        stage="draft_rewrite",
     )
     await session.commit()
     return result.data.text

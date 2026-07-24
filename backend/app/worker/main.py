@@ -9,6 +9,7 @@ from backend.app.core.config import get_settings
 from backend.app.core.logging import configure_logging
 from backend.app.db.session import dispose_engines, get_session_factory
 from backend.app.services.queue import create_queue_broker
+from backend.app.services.daily_plan import run_due_daily_plan
 from backend.app.services.tasks import process_task
 
 
@@ -24,6 +25,15 @@ async def run_worker() -> None:
     try:
         while True:
             await broker.heartbeat(worker_id, state="idle")
+            async with session_factory() as session:
+                try:
+                    result = await run_due_daily_plan(
+                        session, broker, settings
+                    )
+                    if result:
+                        logger.info(result.message)
+                except Exception:
+                    logger.exception("检查每日定时计划失败，将在下一轮重试")
             task_id = await broker.dequeue(timeout=5)
             if not task_id:
                 continue
@@ -52,4 +62,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

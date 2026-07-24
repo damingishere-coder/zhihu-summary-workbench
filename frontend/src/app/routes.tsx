@@ -13,6 +13,9 @@ import { PublishPage } from "../pages/PublishPage";
 import { QuestionDetailPage } from "../pages/QuestionDetailPage";
 import { QuestionsPage } from "../pages/QuestionsPage";
 import { SettingsPage } from "../pages/SettingsPage";
+import { PromptsPage } from "../pages/PromptsPage";
+import { BrowserSettingsPage } from "../pages/BrowserSettingsPage";
+import { OpenSourcePage } from "../pages/OpenSourcePage";
 import { TasksPage } from "../pages/TasksPage";
 
 export const routeInventory = [
@@ -25,6 +28,9 @@ export const routeInventory = [
   "/publish",
   "/settings",
   "/settings/ai",
+  "/prompts",
+  "/settings/browser",
+  "/settings/open-source",
 ] as const;
 
 function ScrollToTop() {
@@ -52,6 +58,9 @@ export function AppRoutes() {
           <Route path="/publish" element={<PublishPage />} />
           <Route path="/settings" element={<SettingsPage />} />
           <Route path="/settings/ai" element={<SettingsPage initialSection="ai" />} />
+          <Route path="/prompts" element={<PromptsPage />} />
+          <Route path="/settings/browser" element={<BrowserSettingsPage />} />
+          <Route path="/settings/open-source" element={<OpenSourcePage />} />
         </Route>
         <Route path="/" element={<Navigate to="/dashboard" replace />} />
         <Route path="*" element={<Navigate to="/dashboard" replace />} />
