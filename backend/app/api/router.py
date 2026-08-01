@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from backend.app.api.routes import (
     analysis,
     answers,
+    browser,
     dashboard,
     drafts,
     health,
@@ -26,4 +27,5 @@ api_router.include_router(drafts.router)
 api_router.include_router(images.router)
 api_router.include_router(publish.router)
 api_router.include_router(settings.router)
+api_router.include_router(browser.router)
 api_router.include_router(prompts.router)

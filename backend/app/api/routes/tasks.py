@@ -14,7 +14,12 @@ from backend.app.models.core import TaskJob
 from backend.app.schemas.task import QueueStatus, TaskListResponse, TaskRead, WorkerRead
 from backend.app.services.queue import QueueBroker
 from backend.app.services.serializers import task_to_read
-from backend.app.services.tasks import cancel_task, retry_task
+from backend.app.services.tasks import (
+    cancel_task,
+    resume_task_after_login,
+    resume_task_after_verification,
+    retry_task,
+)
 
 
 router = APIRouter(tags=["tasks"])
@@ -106,6 +111,43 @@ async def cancel_running_task(
     return task_to_read(task)
 
 
+@router.post("/tasks/{task_id}/resume-after-login", response_model=TaskRead)
+async def resume_waiting_task_after_login(
+    task_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    broker: QueueBroker = Depends(get_broker),
+) -> TaskRead:
+    task = await load_task(session, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        await resume_task_after_login(session, broker, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    task = await load_task(session, task_id)
+    return task_to_read(task)
+
+
+@router.post(
+    "/tasks/{task_id}/resume-after-verification",
+    response_model=TaskRead,
+)
+async def resume_waiting_task_after_verification(
+    task_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    broker: QueueBroker = Depends(get_broker),
+) -> TaskRead:
+    task = await load_task(session, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        await resume_task_after_verification(session, broker, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    task = await load_task(session, task_id)
+    return task_to_read(task)
+
+
 @router.get("/queues/status", response_model=QueueStatus)
 async def get_queue_status(
     broker: QueueBroker = Depends(get_broker),
@@ -153,4 +195,3 @@ async def stream_queue_status(
             "X-Accel-Buffering": "no",
         },
     )
-

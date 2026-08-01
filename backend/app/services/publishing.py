@@ -24,6 +24,10 @@ from backend.app.schemas.publish import (
     PublishScheduleRead,
 )
 from backend.app.services.settings import get_setting
+from backend.app.services.browser_session import (
+    managed_browser_profile_path,
+    managed_browser_session_is_authenticated,
+)
 
 
 CONFIRMATION_TEXT = "确认发布"
@@ -289,27 +293,35 @@ class ZhihuBrowserClient:
     """只做安全状态判断；不会在未确认、未登录或有验证码时继续。"""
 
     def __init__(self, profile_reference: str) -> None:
-        self.profile_reference = profile_reference.strip()
+        configured = profile_reference.strip()
+        self.profile_reference = (
+            configured
+            or (
+                str(managed_browser_profile_path())
+                if managed_browser_session_is_authenticated()
+                else ""
+            )
+        )
 
     async def inspect(self) -> BrowserSafetyState:
         if not self.profile_reference:
             return BrowserSafetyState(
                 state="profile_missing",
                 safe_to_continue=False,
-                message="尚未配置本机 Chrome 用户数据目录，已保持人工发布模式",
+                message="工作台知乎会话尚未登录，已保持人工发布模式",
                 profile_configured=False,
             )
         if not Path(self.profile_reference).exists():
             return BrowserSafetyState(
                 state="browser_unavailable",
                 safe_to_continue=False,
-                message="配置的浏览器用户数据目录不存在，请在设置页重新选择",
+                message="工作台浏览器会话目录不可用，请重新扫码登录",
                 profile_configured=True,
             )
         return BrowserSafetyState(
             state="ready",
             safe_to_continue=True,
-            message="浏览器资料目录可用；实际发布前仍会再次检查登录和验证码",
+            message="工作台浏览器会话可用；实际发布前仍会再次检查登录和验证码",
             profile_configured=True,
         )
 

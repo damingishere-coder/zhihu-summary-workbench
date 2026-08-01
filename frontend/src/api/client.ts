@@ -20,6 +20,7 @@ import type {
   PromptTemplate,
   PromptVersion,
   BrowserSafetyState,
+  ManagedBrowserSession,
   OpenSourceReference,
   Question,
   Task,
@@ -164,6 +165,12 @@ export const api = {
   task: (id: string) => request<Task>(`/tasks/${id}`),
   retryTask: (id: string) => request<Task>(`/tasks/${id}/retry`, { method: "POST" }),
   cancelTask: (id: string) => request<Task>(`/tasks/${id}/cancel`, { method: "POST" }),
+  resumeTaskAfterLogin: (id: string) =>
+    request<Task>(`/tasks/${id}/resume-after-login`, { method: "POST" }),
+  resumeTaskAfterVerification: (id: string) =>
+    request<Task>(`/tasks/${id}/resume-after-verification`, {
+      method: "POST",
+    }),
   workers: () => request<Worker[]>("/workers"),
 
   drafts: () => request<Paginated<Draft>>("/drafts"),
@@ -360,6 +367,20 @@ export const api = {
       body: JSON.stringify({ version, input }),
     }),
   browserSafety: () => request<BrowserSafetyState>("/settings/browser/test"),
+  browserSession: () =>
+    request<ManagedBrowserSession>("/settings/browser/session"),
+  startBrowserSession: () =>
+    request<ManagedBrowserSession>("/settings/browser/session/start", {
+      method: "POST",
+    }),
+  refreshBrowserSession: () =>
+    request<ManagedBrowserSession>("/settings/browser/session/refresh", {
+      method: "POST",
+    }),
+  recheckBrowserSession: () =>
+    request<ManagedBrowserSession>("/settings/browser/session/recheck", {
+      method: "POST",
+    }),
   openSourceReferences: () =>
     request<OpenSourceReference[]>("/open-source-references"),
 };

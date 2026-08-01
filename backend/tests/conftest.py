@@ -9,6 +9,7 @@ os.environ["APP_ENV"] = "test"
 os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 os.environ["QUEUE_BACKEND"] = "memory"
 os.environ["AI_PROVIDER_MODE"] = "mock"
+os.environ["DEEPSEEK_API_KEY"] = ""
 
 from backend.app.core.config import get_settings
 from backend.app.db.base import Base
@@ -39,4 +40,3 @@ async def app_client():
     await broker.close()
     async with engine.begin() as connection:
         await connection.run_sync(Base.metadata.drop_all)
-

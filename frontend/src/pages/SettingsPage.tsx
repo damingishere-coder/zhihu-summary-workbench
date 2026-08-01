@@ -3,7 +3,6 @@ import {
   CheckCircleFilled,
   CodeOutlined,
   DatabaseOutlined,
-  FolderOpenOutlined,
   PictureOutlined,
   SafetyCertificateOutlined,
   SaveOutlined,
@@ -169,15 +168,6 @@ export function SettingsPage({
                 <Input value={query.data.allow_manual_image_upload ? "允许" : "关闭"} disabled />
               </Form.Item>
             </div>
-          </section>
-          <section className="settings-section">
-            <div className="settings-section__heading">
-              <FolderOpenOutlined />
-              <div><h2>浏览器目录</h2><p>只保存路径引用，不读取账号密码、Cookie 或浏览器缓存。</p></div>
-            </div>
-            <Form.Item name="browser_user_data_dir" label="知乎浏览器用户数据目录">
-              <Input placeholder="留空；第三阶段需要时由用户本地配置" />
-            </Form.Item>
           </section>
           <div className="settings-actions">
             <Button type="primary" htmlType="submit" icon={<SaveOutlined />} loading={save.isPending}>

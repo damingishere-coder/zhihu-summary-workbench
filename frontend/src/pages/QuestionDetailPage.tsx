@@ -3,7 +3,9 @@ import {
   FileTextOutlined,
   LinkOutlined,
   PlayCircleOutlined,
+  QrcodeOutlined,
   ReloadOutlined,
+  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -95,6 +97,18 @@ export function QuestionDetailPage() {
     },
     onError: (error) => message.error(error.message),
   });
+  const verificationRecoveryMutation = useMutation({
+    mutationFn: async (waitingTaskId: string) => {
+      await api.recheckBrowserSession();
+      return waitingTaskId;
+    },
+    onSuccess: (waitingTaskId) => {
+      navigate(
+        `/settings/browser?taskId=${encodeURIComponent(waitingTaskId)}&recovery=verification&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+      );
+    },
+    onError: (error) => message.error(error.message),
+  });
   const answerToggle = useMutation({
     mutationFn: ({ answerId, included }: { answerId: string; included: boolean }) =>
       included ? api.includeAnswer(answerId) : api.excludeAnswer(answerId),
@@ -123,6 +137,8 @@ export function QuestionDetailPage() {
   const task = taskQuery.data;
   const analysis = analysisQuery.data;
   const draftId = analysis?.latest_draft_id ?? question.latest_draft_id;
+  const waitingForLogin = task?.status === "waiting_login";
+  const waitingForVerification = task?.status === "waiting_verification";
 
   return (
     <div className="page">
@@ -186,13 +202,58 @@ export function QuestionDetailPage() {
         </Descriptions>
       </section>
 
-      {task?.error_message && (
+      {waitingForLogin && task && (
+        <Alert
+          className="phase-alert"
+          type="warning"
+          showIcon
+          title="任务正在等待知乎登录"
+          description={task.error_message ?? "请使用知乎 App 扫码登录后继续任务。"}
+          action={
+            <Button
+              type="primary"
+              icon={<QrcodeOutlined />}
+              onClick={() =>
+                navigate(
+                  `/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+                )
+              }
+            >
+              去扫码登录
+            </Button>
+          }
+        />
+      )}
+      {waitingForVerification && task && (
+        <Alert
+          className="phase-alert"
+          type="warning"
+          showIcon
+          title="任务正在等待人工验证"
+          description={
+            `这表示本次采集请求被知乎拦截，不代表账号已经退出。系统会先检查现有登录会话，只有知乎明确返回未登录时才会要求扫码。${
+              task.error_message ? ` 本次记录：${task.error_message}` : ""
+            }`
+          }
+          action={
+            <Button
+              type="primary"
+              icon={<SafetyCertificateOutlined />}
+              loading={verificationRecoveryMutation.isPending}
+              onClick={() => verificationRecoveryMutation.mutate(task.id)}
+            >
+              我已完成验证，重新检查并继续
+            </Button>
+          }
+        />
+      )}
+      {task?.error_message && !waitingForLogin && !waitingForVerification && (
         <Alert
           className="phase-alert"
           type="error"
           showIcon
-          title="任务已安全停止"
-          description={`原因：${task.error_message}。已采集和已生成的数据会保留，可在登录或平台限制解除后重试。`}
+          title="任务执行失败"
+          description={`原因：${task.error_message}。已采集和已生成的数据会保留，修复原因后可以重试。`}
         />
       )}
       {task?.result.warnings?.map((warning) => (

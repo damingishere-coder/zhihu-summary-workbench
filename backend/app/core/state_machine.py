@@ -9,8 +9,20 @@ class InvalidTaskTransition(ValueError):
 
 TASK_TRANSITIONS: Mapping[str, set[str]] = {
     "queued": {"fetching_question", "cancelled", "failed"},
-    "fetching_question": {"fetching_answers", "cancelled", "failed"},
-    "fetching_answers": {"cleaning_answers", "cancelled", "failed"},
+    "fetching_question": {
+        "fetching_answers",
+        "waiting_login",
+        "waiting_verification",
+        "cancelled",
+        "failed",
+    },
+    "fetching_answers": {
+        "cleaning_answers",
+        "waiting_login",
+        "waiting_verification",
+        "cancelled",
+        "failed",
+    },
     "cleaning_answers": {"evaluating_answers", "cancelled", "failed"},
     "evaluating_answers": {"extracting_claims", "cancelled", "failed"},
     "extracting_claims": {"generating_embeddings", "cancelled", "failed"},
@@ -23,6 +35,8 @@ TASK_TRANSITIONS: Mapping[str, set[str]] = {
     "waiting_review": set(),
     "failed": {"queued"},
     "cancelled": {"queued"},
+    "waiting_login": {"queued", "cancelled"},
+    "waiting_verification": {"queued", "cancelled"},
 }
 
 

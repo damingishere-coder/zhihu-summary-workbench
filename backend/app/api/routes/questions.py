@@ -23,6 +23,7 @@ from backend.app.schemas.question import (
 )
 from backend.app.schemas.task import TaskRead
 from backend.app.services.queue import QueueBroker
+from backend.app.services.question_deletion import permanently_delete_question
 from backend.app.services.questions import (
     create_question,
     import_questions,
@@ -250,18 +251,7 @@ async def delete_question(
     question = await session.get(Question, question_id)
     if not question:
         raise HTTPException(status_code=404, detail="问题不存在")
-    linked_tasks = int(
-        (
-            await session.scalar(
-                select(func.count(TaskJob.id)).where(TaskJob.question_id == question_id)
-            )
-        )
-        or 0
-    )
-    if linked_tasks:
-        raise HTTPException(
-            status_code=409,
-            detail="该问题已有任务记录，为保留审计历史不能删除；可以改为忽略",
-        )
-    await session.delete(question)
-    await session.commit()
+    try:
+        await permanently_delete_question(session, question)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

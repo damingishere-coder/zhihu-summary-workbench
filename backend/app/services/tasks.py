@@ -3,11 +3,15 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
-from backend.app.collectors.zhihu import ZhihuCollector
+from backend.app.collectors.zhihu import (
+    ZhihuAuthenticationRequired,
+    ZhihuCollector,
+    ZhihuVerificationRequired,
+)
 from backend.app.core.config import Settings
 from backend.app.core.state_machine import assert_task_transition
 from backend.app.models.common import utc_now
@@ -25,9 +29,31 @@ from backend.app.services.content_pipeline import (
     usage_summary,
 )
 from backend.app.services.queue import QueueBroker
+from backend.app.services.browser_session import (
+    managed_browser_session_is_authenticated,
+)
 
 
 logger = logging.getLogger(__name__)
+
+LOGIN_WAITING_STATUS = "waiting_login"
+VERIFICATION_WAITING_STATUS = "waiting_verification"
+ALREADY_RESUMED_STATUSES = {
+    "queued",
+    "fetching_question",
+    "fetching_answers",
+    "cleaning_answers",
+    "evaluating_answers",
+    "extracting_claims",
+    "generating_embeddings",
+    "clustering_claims",
+    "refining_clusters",
+    "generating_opinion_map",
+    "generating_article",
+    "reviewing_article",
+    "waiting_review",
+    "review_approved",
+}
 
 
 async def add_task_log(
@@ -149,13 +175,100 @@ async def retry_task(
     return task
 
 
+async def resume_task_after_login(
+    session: AsyncSession,
+    broker: QueueBroker,
+    task: TaskJob,
+) -> TaskJob:
+    return await _resume_waiting_task(
+        session,
+        broker,
+        task,
+        waiting_status=LOGIN_WAITING_STATUS,
+        invalid_status_message="只有等待知乎登录的任务可以通过登录恢复",
+        resume_log_message="知乎登录已完成，任务自动恢复且不计入失败重试次数",
+    )
+
+
+async def resume_task_after_verification(
+    session: AsyncSession,
+    broker: QueueBroker,
+    task: TaskJob,
+) -> TaskJob:
+    return await _resume_waiting_task(
+        session,
+        broker,
+        task,
+        waiting_status=VERIFICATION_WAITING_STATUS,
+        invalid_status_message="只有等待人工验证的任务可以通过验证确认恢复",
+        resume_log_message=(
+            "用户已确认完成知乎安全验证，任务重新入队且不计入失败重试次数"
+        ),
+    )
+
+
+async def _resume_waiting_task(
+    session: AsyncSession,
+    broker: QueueBroker,
+    task: TaskJob,
+    *,
+    waiting_status: str,
+    invalid_status_message: str,
+    resume_log_message: str,
+) -> TaskJob:
+    if task.status in ALREADY_RESUMED_STATUSES:
+        return task
+    if task.status != waiting_status:
+        raise ValueError(invalid_status_message)
+    if not managed_browser_session_is_authenticated():
+        raise ValueError(
+            "知乎登录尚未完成或状态尚未确认，请先重新检查登录状态"
+        )
+    assert_task_transition(task.status, "queued")
+
+    claimed = await session.execute(
+        update(TaskJob)
+        .where(
+            TaskJob.id == task.id,
+            TaskJob.status == waiting_status,
+        )
+        .values(
+            status="queued",
+            stage="queued",
+            progress=0,
+            error_message=None,
+            cancel_requested=False,
+            worker_id=None,
+            started_at=None,
+            completed_at=None,
+        )
+    )
+    if claimed.rowcount != 1:
+        await session.refresh(task)
+        if task.status in ALREADY_RESUMED_STATUSES:
+            return task
+        raise ValueError("任务状态已变化，请刷新页面后重试")
+
+    await session.refresh(task)
+    task.question.status = "queued"
+    await add_task_log(
+        session,
+        task,
+        stage="queued",
+        message=resume_log_message,
+    )
+    await session.commit()
+    await broker.enqueue(task.id)
+    return task
+
+
 async def cancel_task(
     session: AsyncSession, broker: QueueBroker, task: TaskJob
 ) -> TaskJob:
     if task.status in {"waiting_review", "review_approved", "failed", "cancelled"}:
         raise ValueError("当前任务状态不能取消")
     task.cancel_requested = True
-    if task.status == "queued":
+    if task.status in {"queued", "waiting_login", "waiting_verification"}:
         assert_task_transition(task.status, "cancelled")
         task.status = "cancelled"
         task.stage = "cancelled"
@@ -467,6 +580,37 @@ async def process_task(
                 task,
                 stage="waiting_review",
                 message="第二阶段内容流水线完成，文章和图片 Prompt 工作区已进入草稿审核",
+            )
+            await session.commit()
+            await publish_task_state(broker, task)
+        except (ZhihuAuthenticationRequired, ZhihuVerificationRequired) as exc:
+            await session.rollback()
+            task = await _load_task(session, task_id)
+            if not task:
+                return
+            target = (
+                "waiting_login"
+                if isinstance(exc, ZhihuAuthenticationRequired)
+                else "waiting_verification"
+            )
+            assert_task_transition(task.status, target)
+            task.status = target
+            task.stage = target
+            task.error_message = str(exc)
+            task.completed_at = None
+            task.worker_id = None
+            task.question.status = target
+            await add_task_log(
+                session,
+                task,
+                stage=target,
+                message=(
+                    f"任务等待用户操作：{exc}"
+                    if target == "waiting_login"
+                    else f"任务等待人工验证：{exc}"
+                ),
+                level="warning",
+                metadata=getattr(exc, "details", None),
             )
             await session.commit()
             await publish_task_state(broker, task)

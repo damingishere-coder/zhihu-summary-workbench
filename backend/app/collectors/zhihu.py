@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import html
-import json
 import re
 import uuid
 from dataclasses import dataclass, field
@@ -11,14 +10,32 @@ from datetime import datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlsplit
 
 import httpx
 
 from backend.app.core.config import Settings
+from backend.app.services.browser_session import (
+    BrowserProfileLease,
+    close_browser_context_safely,
+    managed_browser_profile_path,
+    managed_browser_session_is_authenticated,
+    mark_managed_browser_session_invalid,
+    remove_stale_chromium_profile_locks,
+)
 
 
 class ZhihuCollectorError(RuntimeError):
     """知乎采集器可理解错误。"""
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.details = details or {}
 
 
 class ZhihuAuthenticationRequired(ZhihuCollectorError):
@@ -31,6 +48,74 @@ class ZhihuVerificationRequired(ZhihuCollectorError):
 
 class ZhihuPageChanged(ZhihuCollectorError):
     """页面或接口字段已经变化。"""
+
+
+def browser_page_requires_login(url: str) -> bool:
+    path = urlsplit(url).path.rstrip("/")
+    return path == "/signin" or path.startswith("/signin/")
+
+
+def browser_verification_signal(url: str, page_text: str) -> str | None:
+    """只识别验证页强信号，避免问题正文中的普通词语造成误判。"""
+
+    path = urlsplit(url).path.rstrip("/").lower()
+    verification_paths = (
+        "/account/unhuman",
+        "/account/verification",
+        "/captcha",
+        "/security/verification",
+    )
+    if any(
+        path == prefix or path.startswith(f"{prefix}/")
+        for prefix in verification_paths
+    ):
+        return f"url:{path}"
+
+    normalized = " ".join(page_text.split())
+    strong_phrases = (
+        "请完成安全验证",
+        "请先完成安全验证",
+        "您的请求存在异常",
+        "当前请求存在异常",
+        "检测到异常行为",
+        "访问异常，请稍后重试",
+        "暂时限制访问",
+    )
+    for phrase in strong_phrases:
+        if phrase in normalized:
+            return f"text:{phrase}"
+
+    if "安全验证" in normalized and any(
+        marker in normalized
+        for marker in ("完成", "通过", "进行", "请求存在异常", "访问异常")
+    ):
+        return "text:安全验证组合提示"
+    if "暂时限制" in normalized and any(
+        marker in normalized for marker in ("访问", "操作", "请求")
+    ):
+        return "text:暂时限制组合提示"
+    return None
+
+
+async def browser_page_verification_signal(page, page_text: str) -> str | None:
+    signal = browser_verification_signal(page.url, page_text)
+    if signal:
+        return signal
+
+    verification_selectors = (
+        "iframe[src*='captcha']",
+        "form[action*='unhuman']",
+        "[class*='Captcha']:not([class*='Login'])",
+        "[class*='Unhuman']",
+    )
+    for selector in verification_selectors:
+        try:
+            if await page.locator(selector).first.is_visible():
+                return f"selector:{selector}"
+        except Exception:
+            # 页面正在跳转或测试替身不支持完整 Locator API 时继续检查。
+            continue
+    return None
 
 
 @dataclass(slots=True)
@@ -73,6 +158,35 @@ class ZhihuFetchResult:
     collector_mode: str
     batch_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass(slots=True)
+class BrowserQuestionCapture:
+    question_id: str
+    question_payloads: list[dict[str, Any]] = field(default_factory=list)
+    raw_answers: list[dict[str, Any]] = field(default_factory=list)
+    seen_answer_ids: set[str] = field(default_factory=set)
+    reached_end: bool = False
+
+    def add(self, path: str, payload: dict[str, Any]) -> None:
+        question_path = f"/api/v4/questions/{self.question_id}"
+        if question_path not in path:
+            return
+        if path.endswith("/answers"):
+            data = payload.get("data")
+            if isinstance(data, list):
+                for item in data:
+                    if not isinstance(item, dict):
+                        continue
+                    answer_id = str(item.get("id") or "")
+                    if answer_id and answer_id not in self.seen_answer_ids:
+                        self.seen_answer_ids.add(answer_id)
+                        self.raw_answers.append(item)
+            paging = payload.get("paging")
+            if isinstance(paging, dict) and paging.get("is_end") is True:
+                self.reached_end = True
+        elif path.rstrip("/") == question_path:
+            self.question_payloads.append(payload)
 
 
 class _ZhihuHtmlParser(HTMLParser):
@@ -291,6 +405,28 @@ class ZhihuCollector:
             "Referer": "https://www.zhihu.com/",
         }
 
+    def _browser_profile(self) -> tuple[Path, bool]:
+        configured = self.settings.zhihu_browser_user_data_dir.strip()
+        managed = not configured
+        if managed:
+            if not managed_browser_session_is_authenticated():
+                raise ZhihuAuthenticationRequired(
+                    "知乎需要登录，请在浏览器安全设置页使用知乎 App 扫码登录"
+                )
+            profile_path = managed_browser_profile_path()
+        else:
+            profile_path = Path(configured).expanduser().resolve()
+        if not profile_path.exists():
+            if managed:
+                mark_managed_browser_session_invalid()
+                raise ZhihuAuthenticationRequired(
+                    "工作台知乎登录会话不存在，请重新扫码登录"
+                )
+            raise ZhihuAuthenticationRequired(
+                f"配置的浏览器目录不存在：{profile_path}"
+            )
+        return profile_path, managed
+
     async def _api_json(self, url: str) -> dict[str, Any]:
         async with httpx.AsyncClient(
             timeout=self.settings.ai_request_timeout_seconds,
@@ -303,12 +439,27 @@ class ZhihuCollector:
                     response = await client.get(url)
                     text = response.text
                     if response.status_code in {401, 403}:
-                        if any(marker in text for marker in ("验证码", "安全验证", "访问异常")):
+                        verification_signal = browser_verification_signal(
+                            str(response.url),
+                            text,
+                        )
+                        if verification_signal:
                             raise ZhihuVerificationRequired(
-                                "知乎要求人工完成安全验证，采集任务已暂停"
+                                "知乎已登录会话仍有效，但本次请求需要人工完成安全验证",
+                                details={
+                                    "source": "api",
+                                    "http_status": response.status_code,
+                                    "url_path": urlsplit(str(response.url)).path,
+                                    "matched_signal": verification_signal,
+                                },
                             )
                         raise ZhihuAuthenticationRequired(
-                            "知乎接口需要已登录会话，准备切换本地浏览器模式"
+                            "知乎接口需要已登录会话，准备切换本地浏览器模式",
+                            details={
+                                "source": "api",
+                                "http_status": response.status_code,
+                                "url_path": urlsplit(str(response.url)).path,
+                            },
                         )
                     response.raise_for_status()
                     payload = response.json()
@@ -322,66 +473,284 @@ class ZhihuCollector:
             raise ZhihuCollectorError(f"知乎接口请求失败：{last_error}")
 
     async def _browser_json(self, *, page_url: str, api_url: str) -> dict[str, Any]:
-        profile = self.settings.zhihu_browser_user_data_dir.strip()
-        if not profile:
-            raise ZhihuAuthenticationRequired(
-                "接口模式不可用，且未配置知乎本地浏览器目录；请先在设置页配置已登录的 Chrome 用户数据目录"
-            )
-        profile_path = Path(profile).expanduser().resolve()
-        if not profile_path.exists():
-            raise ZhihuAuthenticationRequired(
-                f"配置的浏览器目录不存在：{profile_path}"
-            )
+        profile_path, managed = self._browser_profile()
         try:
             from playwright.async_api import async_playwright
         except ImportError as exc:
             raise ZhihuCollectorError(
-                "未安装 Playwright；请安装后运行 playwright install chrome"
+                "未安装 Playwright，无法启动工作台浏览器"
             ) from exc
 
-        async with async_playwright() as playwright:
-            try:
-                context = await playwright.chromium.launch_persistent_context(
-                    str(profile_path),
-                    channel="chrome",
-                    headless=self.settings.playwright_headless,
+        lease = BrowserProfileLease()
+        if not lease.acquire():
+            raise ZhihuAuthenticationRequired(
+                "工作台浏览器正在用于扫码登录或其他采集任务，请稍后重试"
+            )
+        context = None
+        try:
+            if managed:
+                remove_stale_chromium_profile_locks(profile_path)
+            async with async_playwright() as playwright:
+                try:
+                    context = await playwright.chromium.launch_persistent_context(
+                        str(profile_path),
+                        headless=self.settings.playwright_headless,
+                    )
+                except Exception as exc:
+                    raise ZhihuAuthenticationRequired(
+                        "无法打开工作台知乎登录会话，请稍后重试或重新扫码登录"
+                    ) from exc
+                page = (
+                    context.pages[0]
+                    if context.pages
+                    else await context.new_page()
                 )
-            except Exception as exc:
-                raise ZhihuAuthenticationRequired(
-                    "无法打开本地 Chrome 登录会话；请关闭占用该用户目录的 Chrome 窗口后重试"
-                ) from exc
-            try:
-                page = context.pages[0] if context.pages else await context.new_page()
-                await page.goto(page_url, wait_until="domcontentloaded", timeout=60_000)
+                target_path = urlsplit(api_url).path
+                payloads: list[dict[str, Any]] = []
+                response_tasks: set[asyncio.Task[None]] = set()
+
+                async def capture_response(response) -> None:
+                    if target_path not in urlsplit(response.url).path:
+                        return
+                    if response.status < 200 or response.status >= 300:
+                        return
+                    try:
+                        payload = await response.json()
+                    except Exception:
+                        return
+                    if isinstance(payload, dict):
+                        payloads.append(payload)
+
+                def schedule_capture(response) -> None:
+                    task = asyncio.create_task(capture_response(response))
+                    response_tasks.add(task)
+                    task.add_done_callback(response_tasks.discard)
+
+                page.on("response", schedule_capture)
+                await page.goto(
+                    page_url,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                for _ in range(10):
+                    await page.wait_for_timeout(1_000)
+                    if payloads:
+                        break
+                    await page.evaluate(
+                        "() => window.scrollTo(0, document.body.scrollHeight)"
+                    )
+                if response_tasks:
+                    await asyncio.gather(
+                        *response_tasks,
+                        return_exceptions=True,
+                    )
                 page_text = (await page.locator("body").inner_text())[:10_000]
-                if any(marker in page_text for marker in ("验证码", "安全验证", "登录后")):
-                    raise ZhihuVerificationRequired(
-                        "知乎页面要求登录或人工安全验证，采集任务已暂停"
+                if browser_page_requires_login(page.url):
+                    if managed:
+                        mark_managed_browser_session_invalid()
+                    raise ZhihuAuthenticationRequired(
+                        "知乎登录会话已过期，请重新扫码登录",
+                        details={
+                            "source": "browser_page",
+                            "url_path": urlsplit(page.url).path,
+                            "matched_signal": "url:signin",
+                        },
                     )
-                result = await page.evaluate(
-                    """async (url) => {
-                      const response = await fetch(url, {
-                        credentials: "include",
-                        headers: {"Accept": "application/json, text/plain, */*"}
-                      });
-                      return {status: response.status, text: await response.text()};
-                    }""",
-                    api_url,
+                verification_signal = await browser_page_verification_signal(
+                    page,
+                    page_text,
                 )
-                status = int(result.get("status", 0))
-                text = str(result.get("text", ""))
-                if status in {401, 403}:
+                if verification_signal:
                     raise ZhihuVerificationRequired(
-                        "本地浏览器会话未通过知乎验证，采集任务已暂停"
+                        "知乎已登录会话仍有效，但本次采集被安全验证拦截",
+                        details={
+                            "source": "browser_page",
+                            "url_path": urlsplit(page.url).path,
+                            "matched_signal": verification_signal,
+                        },
                     )
-                if status < 200 or status >= 300:
-                    raise ZhihuCollectorError(f"知乎浏览器请求失败（HTTP {status}）")
-                payload = json.loads(text)
-                if not isinstance(payload, dict):
-                    raise ZhihuPageChanged("知乎浏览器响应未返回 JSON 对象")
-                return payload
+                if not payloads:
+                    raise ZhihuPageChanged(
+                        "知乎页面未加载预期数据，页面结构可能已经变化"
+                    )
+                return payloads[0]
+        finally:
+            if context is not None:
+                await close_browser_context_safely(context)
+            lease.release()
+
+    async def _browser_question_and_answers(
+        self,
+        question_id: str,
+        *,
+        max_answers: int,
+    ) -> ZhihuFetchResult:
+        profile_path, managed = self._browser_profile()
+        try:
+            from playwright.async_api import async_playwright
+        except ImportError as exc:
+            raise ZhihuCollectorError(
+                "未安装 Playwright，无法启动工作台浏览器"
+            ) from exc
+
+        lease = BrowserProfileLease()
+        if not lease.acquire():
+            raise ZhihuAuthenticationRequired(
+                "工作台浏览器正在用于扫码登录或其他采集任务，请稍后重试"
+            )
+        context = None
+        try:
+            if managed:
+                remove_stale_chromium_profile_locks(profile_path)
+            async with async_playwright() as playwright:
+                try:
+                    context = await playwright.chromium.launch_persistent_context(
+                        str(profile_path),
+                        headless=self.settings.playwright_headless,
+                    )
+                except Exception as exc:
+                    raise ZhihuAuthenticationRequired(
+                        "无法打开工作台知乎登录会话，请稍后重试或重新扫码登录"
+                    ) from exc
+                page = (
+                    context.pages[0]
+                    if context.pages
+                    else await context.new_page()
+                )
+                page_url = f"https://www.zhihu.com/question/{question_id}"
+                capture = BrowserQuestionCapture(question_id)
+                response_tasks: set[asyncio.Task[None]] = set()
+
+                async def capture_response(response) -> None:
+                    path = urlsplit(response.url).path
+                    question_path = f"/api/v4/questions/{question_id}"
+                    if question_path not in path:
+                        return
+                    if response.status < 200 or response.status >= 300:
+                        return
+                    try:
+                        payload = await response.json()
+                    except Exception:
+                        return
+                    if not isinstance(payload, dict):
+                        return
+                    capture.add(path, payload)
+
+                def schedule_capture(response) -> None:
+                    task = asyncio.create_task(capture_response(response))
+                    response_tasks.add(task)
+                    task.add_done_callback(response_tasks.discard)
+
+                page.on("response", schedule_capture)
+                await page.goto(
+                    page_url,
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                await page.wait_for_timeout(2_000)
+
+                page_text = (await page.locator("body").inner_text())[:10_000]
+                if browser_page_requires_login(page.url):
+                    if managed:
+                        mark_managed_browser_session_invalid()
+                    raise ZhihuAuthenticationRequired(
+                        "知乎登录会话已过期，请重新扫码登录",
+                        details={
+                            "source": "browser_page",
+                            "url_path": urlsplit(page.url).path,
+                            "matched_signal": "url:signin",
+                        },
+                    )
+                verification_signal = await browser_page_verification_signal(
+                    page,
+                    page_text,
+                )
+                if verification_signal:
+                    raise ZhihuVerificationRequired(
+                        "知乎已登录会话仍有效，但本次采集被安全验证拦截",
+                        details={
+                            "source": "browser_page",
+                            "url_path": urlsplit(page.url).path,
+                            "matched_signal": verification_signal,
+                        },
+                    )
+
+                stagnant_rounds = 0
+                previous_count = -1
+                max_scroll_rounds = max(12, min(80, max_answers * 2))
+                for _ in range(max_scroll_rounds):
+                    if (
+                        len(capture.raw_answers) >= max_answers
+                        or capture.reached_end
+                    ):
+                        break
+                    if len(capture.raw_answers) == previous_count:
+                        stagnant_rounds += 1
+                    else:
+                        stagnant_rounds = 0
+                        previous_count = len(capture.raw_answers)
+                    if stagnant_rounds >= 4:
+                        break
+                    await page.evaluate(
+                        "() => window.scrollTo(0, document.body.scrollHeight)"
+                    )
+                    await page.mouse.wheel(0, 2_000)
+                    await page.wait_for_timeout(1_200)
+
+                if response_tasks:
+                    await asyncio.gather(
+                        *response_tasks,
+                        return_exceptions=True,
+                    )
+
+                question = None
+                if capture.question_payloads:
+                    question = parse_question_payload(
+                        capture.question_payloads[-1]
+                    )
+                else:
+                    title_locator = page.locator(
+                        "h1.QuestionHeader-title, h1"
+                    ).first
+                    title = (
+                        (await title_locator.inner_text()).strip()
+                        if await title_locator.is_visible()
+                        else ""
+                    )
+                    if title:
+                        question = CollectedQuestion(
+                            external_id=question_id,
+                            title=title,
+                            url=page_url,
+                            raw_snapshot={"source": "browser_dom"},
+                        )
+                if not question:
+                    raise ZhihuPageChanged(
+                        "知乎页面未加载问题信息，页面结构可能已经变化"
+                    )
+
+                answers: list[CollectedAnswer] = []
+                seen_hashes: set[str] = set()
+                for raw in capture.raw_answers:
+                    answer = parse_answer_payload(raw, len(answers))
+                    if answer.content_hash in seen_hashes:
+                        continue
+                    seen_hashes.add(answer.content_hash)
+                    answers.append(answer)
+                    if len(answers) >= max_answers:
+                        break
+                return ZhihuFetchResult(
+                    question=question,
+                    answers=answers,
+                    collector_mode="browser",
+                    warnings=[],
+                )
+        finally:
+            try:
+                if context is not None:
+                    await close_browser_context_safely(context)
             finally:
-                await context.close()
+                lease.release()
 
     async def _json(
         self,
@@ -391,6 +760,17 @@ class ZhihuCollector:
         collector_mode: Literal["auto", "api", "browser"],
     ) -> tuple[dict[str, Any], str, list[str]]:
         warnings: list[str] = []
+        managed_session_ready = (
+            collector_mode == "auto"
+            and not self.settings.zhihu_browser_user_data_dir.strip()
+            and managed_browser_session_is_authenticated()
+        )
+        if managed_session_ready:
+            payload = await self._browser_json(
+                page_url=page_url,
+                api_url=api_url,
+            )
+            return payload, "browser", warnings
         if collector_mode in {"auto", "api"}:
             try:
                 return await self._api_json(api_url), "api", warnings
@@ -409,16 +789,36 @@ class ZhihuCollector:
         mode: Literal["representative", "complete"],
         collector_mode: Literal["auto", "api", "browser"] = "auto",
     ) -> ZhihuFetchResult:
+        managed_session_ready = (
+            collector_mode == "auto"
+            and not self.settings.zhihu_browser_user_data_dir.strip()
+            and managed_browser_session_is_authenticated()
+        )
+        if collector_mode == "browser" or managed_session_ready:
+            return await self._browser_question_and_answers(
+                question_id,
+                max_answers=max_answers,
+            )
+
         page_url = f"https://www.zhihu.com/question/{question_id}"
         question_api = (
             f"https://www.zhihu.com/api/v4/questions/{question_id}"
             f"?include={self.question_include}"
         )
-        question_payload, used_mode, warnings = await self._json(
-            api_url=question_api,
-            page_url=page_url,
-            collector_mode=collector_mode,
-        )
+        warnings: list[str] = []
+        try:
+            question_payload = await self._api_json(question_api)
+            used_mode = "api"
+        except (ZhihuAuthenticationRequired, ZhihuVerificationRequired) as exc:
+            if collector_mode == "api":
+                raise
+            warnings.append(str(exc))
+            result = await self._browser_question_and_answers(
+                question_id,
+                max_answers=max_answers,
+            )
+            result.warnings = warnings
+            return result
         question = parse_question_payload(question_payload)
         answers: list[CollectedAnswer] = []
         offset = 0
@@ -433,14 +833,21 @@ class ZhihuCollector:
                 f"?include={self.answer_include}&limit={limit}&offset={offset}"
                 f"&sort_by={sort_by}"
             )
-            payload, page_mode, page_warnings = await self._json(
-                api_url=api_url,
-                page_url=page_url,
-                collector_mode="browser" if used_mode == "browser" else collector_mode,
-            )
-            if page_mode == "browser":
-                used_mode = "browser"
-            warnings.extend(item for item in page_warnings if item not in warnings)
+            try:
+                payload = await self._api_json(api_url)
+            except (
+                ZhihuAuthenticationRequired,
+                ZhihuVerificationRequired,
+            ) as exc:
+                if collector_mode == "api":
+                    raise
+                warnings.append(str(exc))
+                result = await self._browser_question_and_answers(
+                    question_id,
+                    max_answers=max_answers,
+                )
+                result.warnings = list(dict.fromkeys(warnings))
+                return result
             data = payload.get("data")
             if not isinstance(data, list):
                 raise ZhihuPageChanged("知乎回答响应缺少 data 列表")

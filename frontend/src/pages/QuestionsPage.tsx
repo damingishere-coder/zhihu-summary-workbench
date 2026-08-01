@@ -42,6 +42,9 @@ const tabStatus: Record<string, string> = {
   已忽略: "ignored",
 };
 
+export const PERMANENT_DELETE_WARNING =
+  "将同时删除关联任务、回答、分析、草稿、图片和本地发布记录，删除后无法恢复。此操作不会删除知乎网站上的内容。若任务正在排队或运行，请先取消并等待停止。";
+
 export function QuestionsPage() {
   const navigate = useNavigate();
   const { message, modal } = App.useApp();
@@ -61,8 +64,15 @@ export function QuestionsPage() {
     queryFn: () => api.questions(filters),
   });
   const refresh = async () => {
-    await queryClient.invalidateQueries({ queryKey: ["questions"] });
-    await queryClient.invalidateQueries({ queryKey: ["dashboard"] });
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["questions"] }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      queryClient.invalidateQueries({ queryKey: ["drafts"] }),
+      queryClient.invalidateQueries({ queryKey: ["publish-schedules"] }),
+      queryClient.invalidateQueries({ queryKey: ["publish-records"] }),
+      queryClient.invalidateQueries({ queryKey: ["drafts", "publish-readiness"] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    ]);
   };
   const queueMutation = useMutation({
     mutationFn: api.queueQuestion,
@@ -89,7 +99,7 @@ export function QuestionsPage() {
   const deleteMutation = useMutation({
     mutationFn: api.deleteQuestion,
     onSuccess: async () => {
-      message.success("问题已删除");
+      message.success("问题及全部关联本地数据已永久删除");
       await refresh();
     },
     onError: (error) => message.error(error.message),
@@ -206,9 +216,9 @@ export function QuestionsPage() {
                   danger: true,
                   onClick: () =>
                     modal.confirm({
-                      title: "确认删除这个问题？",
-                      content: "已有任务的问题不能删除，以保护审计历史；可以改为忽略。",
-                      okText: "确认删除",
+                      title: "永久删除这个问题？",
+                      content: PERMANENT_DELETE_WARNING,
+                      okText: "永久删除",
                       okButtonProps: { danger: true },
                       cancelText: "取消",
                       onOk: () => deleteMutation.mutateAsync(question.id),

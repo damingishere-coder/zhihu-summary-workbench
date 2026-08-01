@@ -11,6 +11,7 @@ from backend.app.core.logging import configure_logging
 from backend.app.db.session import dispose_engines, get_session_factory
 from backend.app.services.queue import create_queue_broker
 from backend.app.services.seed import seed_defaults
+from backend.app.services.browser_session import ManagedZhihuBrowserSession
 
 
 configure_logging()
@@ -24,6 +25,7 @@ async def lifespan(app: FastAPI):
     async with get_session_factory()() as session:
         await seed_defaults(session)
     yield
+    await app.state.zhihu_browser_session.shutdown()
     await broker.close()
     await dispose_engines()
 
@@ -36,6 +38,7 @@ def create_app() -> FastAPI:
         description="知乎问题总结工作台第三阶段 API",
         lifespan=lifespan,
     )
+    app.state.zhihu_browser_session = ManagedZhihuBrowserSession()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

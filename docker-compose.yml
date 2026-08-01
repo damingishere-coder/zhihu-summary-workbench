@@ -1,10 +1,10 @@
 services:
   redis:
-    image: redis:7-alpine
+    image: m.daocloud.io/docker.io/library/redis:7-alpine
     container_name: zhihu-summary-redis
     command: ["redis-server", "--appendonly", "yes", "--maxmemory-policy", "noeviction"]
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis-data:/data
     healthcheck:
@@ -14,8 +14,107 @@ services:
       retries: 20
     restart: unless-stopped
 
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: zhihu-summary-backend:local
+    container_name: zhihu-summary-backend
+    init: true
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      APP_ENV: development
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8000
+      DATABASE_URL: sqlite+aiosqlite:///./data/workbench.db
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: redis
+      PLAYWRIGHT_HEADLESS: "true"
+      MANAGED_LOGIN_HEADLESS: "false"
+    command:
+      - sh
+      - -c
+      - >
+        python -m alembic upgrade head &&
+        exec xvfb-run --auto-servernum
+        --server-args="-screen 0 1280x1024x24 -nolisten tcp"
+        python -m uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=3)",
+        ]
+      interval: 5s
+      timeout: 4s
+      retries: 20
+      start_period: 10s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: zhihu-summary-backend:local
+    container_name: zhihu-summary-worker
+    init: true
+    env_file:
+      - path: ./.env
+        required: false
+    environment:
+      APP_ENV: development
+      DATABASE_URL: sqlite+aiosqlite:///./data/workbench.db
+      REDIS_URL: redis://redis:6379/0
+      QUEUE_BACKEND: redis
+      PLAYWRIGHT_HEADLESS: "false"
+    command:
+      - sh
+      - -c
+      - >
+        exec xvfb-run --auto-servernum
+        --server-args="-screen 0 1280x1024x24 -nolisten tcp"
+        python -m backend.app.worker.main
+    volumes:
+      - ./data:/app/data
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    image: zhihu-summary-frontend:local
+    container_name: zhihu-summary-frontend
+    ports:
+      - "127.0.0.1:4173:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1/ >/dev/null"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
   postgres:
-    image: postgres:17-alpine
+    image: m.daocloud.io/docker.io/library/postgres:17-alpine
     container_name: zhihu-summary-postgres
     profiles: ["postgres"]
     environment:
@@ -23,7 +122,7 @@ services:
       POSTGRES_USER: zhihu_summary
       POSTGRES_PASSWORD: local_development_only
     ports:
-      - "5432:5432"
+      - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
     healthcheck:
@@ -35,4 +134,3 @@ services:
 volumes:
   redis-data:
   postgres-data:
-

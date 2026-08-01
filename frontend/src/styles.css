@@ -1703,6 +1703,51 @@ a:focus-visible,
   font-size: 11px;
 }
 
+.browser-login-card__status {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+.browser-login-card__status > div {
+  min-width: 0;
+}
+
+.browser-login-card .ant-alert-description {
+  overflow-wrap: anywhere;
+}
+
+.browser-login-card__qr {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  padding: 22px;
+  text-align: center;
+  background: var(--wb-surface-subtle);
+  border: 1px solid var(--wb-border);
+  border-radius: 6px;
+}
+
+.browser-login-card__qr img {
+  width: 184px;
+  height: 184px;
+  padding: 12px;
+  image-rendering: pixelated;
+  background: #fff;
+  border-radius: 6px;
+}
+
+.browser-login-card__qr strong {
+  color: var(--wb-text);
+  font-size: 14px;
+}
+
+.browser-login-card__qr span {
+  color: var(--wb-text-secondary);
+  font-size: 12px;
+}
+
 .settings-form {
   display: grid;
   gap: 16px;

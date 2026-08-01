@@ -431,6 +431,22 @@ export interface BrowserSafetyState {
   screenshot_url: string | null;
 }
 
+export interface ManagedBrowserSession {
+  state:
+    | "idle"
+    | "starting"
+    | "qr_ready"
+    | "scanned"
+    | "authenticated"
+    | "expired"
+    | "verification_required"
+    | "failed";
+  authenticated: boolean;
+  message: string;
+  qr_code_url: string | null;
+  updated_at: string;
+}
+
 export interface OpenSourceReference {
   id: string;
   name: string;

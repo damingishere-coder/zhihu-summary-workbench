@@ -6,11 +6,14 @@ from backend.app.collectors.zhihu import (
     CollectedAnswer,
     CollectedQuestion,
     ZhihuFetchResult,
+    ZhihuAuthenticationRequired,
+    ZhihuVerificationRequired,
     clean_answer_html,
 )
 from backend.app.core.config import get_settings
 from backend.app.db.session import get_session_factory
 from backend.app.services.tasks import process_task
+from backend.app.services import tasks as task_service
 
 
 class FakeZhihuCollector:
@@ -63,6 +66,23 @@ class FakeZhihuCollector:
             ),
             answers=answers,
             collector_mode="test_fixture",
+        )
+
+
+class LoginRequiredCollector:
+    async def fetch_question_and_answers(self, _question_id, **_kwargs):
+        raise ZhihuAuthenticationRequired("请先扫码登录知乎")
+
+
+class VerificationRequiredCollector:
+    async def fetch_question_and_answers(self, _question_id, **_kwargs):
+        raise ZhihuVerificationRequired(
+            "知乎已登录会话仍有效，但本次采集被安全验证拦截",
+            details={
+                "source": "browser_page",
+                "url_path": "/account/unhuman",
+                "matched_signal": "url:/account/unhuman",
+            },
         )
 
 
@@ -214,3 +234,139 @@ async def test_cancelled_task_can_retry_and_preserves_retry_count(app_client) ->
     assert retried.status_code == 200, retried.text
     assert retried.json()["status"] == "queued"
     assert retried.json()["retry_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_login_required_task_resumes_without_consuming_retry(
+    app_client,
+    monkeypatch,
+) -> None:
+    _, client, broker = app_client
+    created = await client.post(
+        "/api/questions/manual",
+        json={
+            "url": "https://www.zhihu.com/question/88776655",
+            "title": "如何验证扫码恢复任务？",
+        },
+    )
+    question_id = created.json()["id"]
+    queued = await client.post(f"/api/questions/{question_id}/queue")
+    task_id = queued.json()["id"]
+    assert await broker.dequeue(timeout=1) == task_id
+
+    await process_task(
+        task_id,
+        worker_id="test-worker-login",
+        settings=get_settings(),
+        broker=broker,
+        session_factory=get_session_factory(),
+        collector=LoginRequiredCollector(),
+    )
+
+    waiting = await client.get(f"/api/tasks/{task_id}")
+    assert waiting.json()["status"] == "waiting_login"
+    assert waiting.json()["retry_count"] == 0
+
+    monkeypatch.setattr(
+        task_service,
+        "managed_browser_session_is_authenticated",
+        lambda: False,
+    )
+    blocked = await client.post(f"/api/tasks/{task_id}/resume-after-login")
+    assert blocked.status_code == 409
+    assert "登录尚未完成" in blocked.json()["detail"]
+
+    monkeypatch.setattr(
+        task_service,
+        "managed_browser_session_is_authenticated",
+        lambda: True,
+    )
+    resumed = await client.post(f"/api/tasks/{task_id}/resume-after-login")
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "queued"
+    assert resumed.json()["retry_count"] == 0
+    assert await broker.dequeue(timeout=1) == task_id
+
+    repeated = await client.post(f"/api/tasks/{task_id}/resume-after-login")
+    assert repeated.status_code == 200, repeated.text
+    assert repeated.json()["status"] == "queued"
+    assert repeated.json()["retry_count"] == 0
+    assert await broker.dequeue(timeout=0.01) is None
+
+    detail = await client.get(f"/api/tasks/{task_id}")
+    resume_logs = [
+        item
+        for item in detail.json()["logs"]
+        if "任务自动恢复" in item["message"]
+    ]
+    assert len(resume_logs) == 1
+
+
+@pytest.mark.asyncio
+async def test_verification_task_resumes_once_without_relogin_or_retry(
+    app_client,
+    monkeypatch,
+) -> None:
+    _, client, broker = app_client
+    created = await client.post(
+        "/api/questions/manual",
+        json={
+            "url": "https://www.zhihu.com/question/99887766",
+            "title": "如何验证风控恢复任务？",
+        },
+    )
+    question_id = created.json()["id"]
+    queued = await client.post(f"/api/questions/{question_id}/queue")
+    task_id = queued.json()["id"]
+    assert await broker.dequeue(timeout=1) == task_id
+
+    await process_task(
+        task_id,
+        worker_id="test-worker-verification",
+        settings=get_settings(),
+        broker=broker,
+        session_factory=get_session_factory(),
+        collector=VerificationRequiredCollector(),
+    )
+
+    waiting = await client.get(f"/api/tasks/{task_id}")
+    assert waiting.json()["status"] == "waiting_verification"
+    assert waiting.json()["retry_count"] == 0
+    verification_log = waiting.json()["logs"][-1]
+    assert verification_log["metadata_json"]["source"] == "browser_page"
+    assert (
+        verification_log["metadata_json"]["matched_signal"]
+        == "url:/account/unhuman"
+    )
+
+    wrong_endpoint = await client.post(
+        f"/api/tasks/{task_id}/resume-after-login"
+    )
+    assert wrong_endpoint.status_code == 409
+
+    monkeypatch.setattr(
+        task_service,
+        "managed_browser_session_is_authenticated",
+        lambda: True,
+    )
+    resumed = await client.post(
+        f"/api/tasks/{task_id}/resume-after-verification"
+    )
+    assert resumed.status_code == 200, resumed.text
+    assert resumed.json()["status"] == "queued"
+    assert resumed.json()["retry_count"] == 0
+    assert await broker.dequeue(timeout=1) == task_id
+
+    repeated = await client.post(
+        f"/api/tasks/{task_id}/resume-after-verification"
+    )
+    assert repeated.status_code == 200, repeated.text
+    assert await broker.dequeue(timeout=0.01) is None
+
+    detail = await client.get(f"/api/tasks/{task_id}")
+    resume_logs = [
+        item
+        for item in detail.json()["logs"]
+        if "确认完成知乎安全验证" in item["message"]
+    ]
+    assert len(resume_logs) == 1

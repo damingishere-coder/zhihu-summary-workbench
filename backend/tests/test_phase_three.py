@@ -160,7 +160,7 @@ async def test_infographic_editor_render_and_download(
 
 @pytest.mark.asyncio
 async def test_publish_readiness_schedule_confirmation_and_safe_pause(
-    app_client, tmp_path
+    app_client, tmp_path, monkeypatch
 ) -> None:
     _, client, _ = app_client
     draft_id = await _draft_fixture(approved=True)
@@ -232,6 +232,11 @@ async def test_publish_readiness_schedule_confirmation_and_safe_pause(
     assert executed["confirmed_at"] is not None
     assert executed["executed_at"] is not None
 
+    # 这条测试验证“未登录时安全暂停”，不能被开发机上的真实扫码会话影响。
+    monkeypatch.setattr(
+        "backend.app.services.publishing.managed_browser_session_is_authenticated",
+        lambda: False,
+    )
     safety = await client.get("/api/settings/browser/test")
     assert safety.status_code == 200
     assert safety.json()["safe_to_continue"] is False
