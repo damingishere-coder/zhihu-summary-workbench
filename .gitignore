@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Local runtime data
+.env
+.env.*
+!.env.example
+data/
+logs/
+artifacts/runtime/
+artifacts/ui/draft-review-1280.png
+artifacts/ui/phase2-reference-comparison.png
+
+# Browser and credentials
+.auth/
+.browser/
+browser-data/
+playwright/.cache/
+*.cookie
+*.cookies
+
+# Editor / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

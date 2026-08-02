@@ -1,0 +1,14 @@
+[tool.pytest.ini_options]
+addopts = "-q --strict-markers"
+asyncio_mode = "auto"
+pythonpath = ["."]
+testpaths = ["backend/tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["backend/app"]
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+

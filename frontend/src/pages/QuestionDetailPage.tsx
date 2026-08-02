@@ -1,0 +1,354 @@
+import {
+  ArrowLeftOutlined,
+  FileTextOutlined,
+  LinkOutlined,
+  PlayCircleOutlined,
+  QrcodeOutlined,
+  ReloadOutlined,
+  SafetyCertificateOutlined,
+} from "@ant-design/icons";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Alert,
+  App,
+  Button,
+  Descriptions,
+  Progress,
+  Space,
+  Timeline,
+} from "antd";
+import { useNavigate, useParams } from "react-router-dom";
+import { api } from "../api/client";
+import { AnswerExplorer } from "../components/AnswerExplorer";
+import { OpinionMapPanel } from "../components/OpinionMapPanel";
+import { PageHeader } from "../components/PageHeader";
+import { PriorityTag } from "../components/PriorityTag";
+import { ErrorState, LoadingBlock } from "../components/StateViews";
+import { StatusTag } from "../components/StatusTag";
+import { formatDateTime } from "../utils/format";
+
+const processingStates = [
+  "queued",
+  "fetching_question",
+  "fetching_answers",
+  "cleaning_answers",
+  "evaluating_answers",
+  "extracting_claims",
+  "generating_embeddings",
+  "clustering_claims",
+  "refining_clusters",
+  "generating_opinion_map",
+  "generating_article",
+  "reviewing_article",
+];
+
+export function QuestionDetailPage() {
+  const { id = "" } = useParams();
+  const navigate = useNavigate();
+  const { message } = App.useApp();
+  const queryClient = useQueryClient();
+  const questionQuery = useQuery({
+    queryKey: ["questions", id],
+    queryFn: () => api.question(id),
+    enabled: Boolean(id),
+  });
+  const taskId = questionQuery.data?.latest_task_id;
+  const taskQuery = useQuery({
+    queryKey: ["tasks", taskId],
+    queryFn: () => api.task(taskId!),
+    enabled: Boolean(taskId),
+    refetchInterval: (query) =>
+      processingStates.includes(query.state.data?.status ?? "") ? 2_000 : false,
+  });
+  const answersQuery = useQuery({
+    queryKey: ["answers", id],
+    queryFn: () => api.answers(id, { limit: 100 }),
+    enabled: Boolean(id),
+    refetchInterval: processingStates.includes(taskQuery.data?.status ?? "") ? 3_000 : false,
+  });
+  const analysisQuery = useQuery({
+    queryKey: ["analysis", id],
+    queryFn: () => api.analysis(id),
+    enabled: Boolean(id),
+    refetchInterval: processingStates.includes(taskQuery.data?.status ?? "") ? 3_000 : false,
+  });
+  const refresh = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["questions"] }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      queryClient.invalidateQueries({ queryKey: ["answers", id] }),
+      queryClient.invalidateQueries({ queryKey: ["analysis", id] }),
+      queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
+    ]);
+  };
+  const queueMutation = useMutation({
+    mutationFn: () => api.queueQuestion(id),
+    onSuccess: async () => {
+      message.success("完整内容任务已加入队列");
+      await refresh();
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const retryMutation = useMutation({
+    mutationFn: (task: string) => api.retryTask(task),
+    onSuccess: async () => {
+      message.success("任务已重新入队");
+      await refresh();
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const verificationRecoveryMutation = useMutation({
+    mutationFn: async (waitingTaskId: string) => {
+      await api.recheckBrowserSession();
+      return waitingTaskId;
+    },
+    onSuccess: (waitingTaskId) => {
+      navigate(
+        `/settings/browser?taskId=${encodeURIComponent(waitingTaskId)}&recovery=verification&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+      );
+    },
+    onError: (error) => message.error(error.message),
+  });
+  const answerToggle = useMutation({
+    mutationFn: ({ answerId, included }: { answerId: string; included: boolean }) =>
+      included ? api.includeAnswer(answerId) : api.excludeAnswer(answerId),
+    onSuccess: async () => {
+      message.success("回答分析状态已更新；重跑分析时会使用新选择");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["answers", id] }),
+        queryClient.invalidateQueries({ queryKey: ["analysis", id] }),
+      ]);
+    },
+    onError: (error) => message.error(error.message),
+  });
+
+  if (questionQuery.isLoading) {
+    return <div className="page"><LoadingBlock rows={16} /></div>;
+  }
+  if (questionQuery.isError) {
+    return (
+      <div className="page">
+        <ErrorState error={questionQuery.error} onRetry={() => void questionQuery.refetch()} />
+      </div>
+    );
+  }
+  const question = questionQuery.data;
+  if (!question) return null;
+  const task = taskQuery.data;
+  const analysis = analysisQuery.data;
+  const draftId = analysis?.latest_draft_id ?? question.latest_draft_id;
+  const waitingForLogin = task?.status === "waiting_login";
+  const waitingForVerification = task?.status === "waiting_verification";
+
+  return (
+    <div className="page">
+      <Button
+        className="back-button"
+        type="text"
+        icon={<ArrowLeftOutlined />}
+        onClick={() => navigate("/questions")}
+      >
+        返回问题池
+      </Button>
+      <PageHeader
+        eyebrow={`问题 ID · ${question.external_id ?? question.id.slice(0, 8)}`}
+        title={question.title}
+        description="查看原始回答、观点地图，以及完整任务的模型、Token、费用和日志。"
+        actions={
+          <Space wrap>
+            <Button icon={<LinkOutlined />} href={question.url} target="_blank" rel="noreferrer">
+              打开原问题
+            </Button>
+            {draftId && (
+              <Button icon={<FileTextOutlined />} onClick={() => navigate(`/drafts/${draftId}/review`)}>
+                打开草稿审核
+              </Button>
+            )}
+            {!task ? (
+              <Button
+                type="primary"
+                icon={<PlayCircleOutlined />}
+                loading={queueMutation.isPending}
+                onClick={() => queueMutation.mutate()}
+              >
+                开始完整分析
+              </Button>
+            ) : ["failed", "cancelled"].includes(task.status) ? (
+              <Button
+                type="primary"
+                icon={<ReloadOutlined />}
+                loading={retryMutation.isPending}
+                onClick={() => retryMutation.mutate(task.id)}
+              >
+                重试任务
+              </Button>
+            ) : null}
+          </Space>
+        }
+      />
+
+      <section className="work-surface question-context-strip">
+        <Descriptions column={{ xs: 1, md: 3, xl: 6 }} size="small">
+          <Descriptions.Item label="状态"><StatusTag status={question.status} /></Descriptions.Item>
+          <Descriptions.Item label="优先级"><PriorityTag priority={question.priority} /></Descriptions.Item>
+          <Descriptions.Item label="来源">
+            {{ manual: "手动推荐", import: "批量导入", hot: "知乎热榜" }[question.source] ?? question.source}
+          </Descriptions.Item>
+          <Descriptions.Item label="平台回答数">{question.answer_count || "—"}</Descriptions.Item>
+          <Descriptions.Item label="关注数">{question.follower_count || "—"}</Descriptions.Item>
+          <Descriptions.Item label="最近采集">
+            {question.fetched_at ? formatDateTime(question.fetched_at, true) : "尚未采集"}
+          </Descriptions.Item>
+        </Descriptions>
+      </section>
+
+      {waitingForLogin && task && (
+        <Alert
+          className="phase-alert"
+          type="warning"
+          showIcon
+          title="任务正在等待知乎登录"
+          description={task.error_message ?? "请使用知乎 App 扫码登录后继续任务。"}
+          action={
+            <Button
+              type="primary"
+              icon={<QrcodeOutlined />}
+              onClick={() =>
+                navigate(
+                  `/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+                )
+              }
+            >
+              去扫码登录
+            </Button>
+          }
+        />
+      )}
+      {waitingForVerification && task && (
+        <Alert
+          className="phase-alert"
+          type="warning"
+          showIcon
+          title="任务正在等待人工验证"
+          description={
+            `这表示本次采集请求被知乎拦截，不代表账号已经退出。系统会先检查现有登录会话，只有知乎明确返回未登录时才会要求扫码。${
+              task.error_message ? ` 本次记录：${task.error_message}` : ""
+            }`
+          }
+          action={
+            <Button
+              type="primary"
+              icon={<SafetyCertificateOutlined />}
+              loading={verificationRecoveryMutation.isPending}
+              onClick={() => verificationRecoveryMutation.mutate(task.id)}
+            >
+              我已完成验证，重新检查并继续
+            </Button>
+          }
+        />
+      )}
+      {task?.error_message && !waitingForLogin && !waitingForVerification && (
+        <Alert
+          className="phase-alert"
+          type="error"
+          showIcon
+          title="任务执行失败"
+          description={`原因：${task.error_message}。已采集和已生成的数据会保留，修复原因后可以重试。`}
+        />
+      )}
+      {task?.result.warnings?.map((warning) => (
+        <Alert key={warning} className="phase-alert" type="warning" showIcon title={warning} />
+      ))}
+
+      <div className="question-analysis-grid">
+        <section className="work-surface question-analysis-column">
+          <div className="section-heading">
+            <div>
+              <h2>原始回答</h2>
+              <p>展开查看正文、质量评分和原回答。</p>
+            </div>
+          </div>
+          {answersQuery.isLoading ? (
+            <LoadingBlock rows={12} />
+          ) : answersQuery.isError ? (
+            <ErrorState error={answersQuery.error} onRetry={() => void answersQuery.refetch()} />
+          ) : (
+            <AnswerExplorer
+              data={answersQuery.data}
+              pendingId={answerToggle.variables?.answerId}
+              onToggle={(answerId, included) => answerToggle.mutate({ answerId, included })}
+            />
+          )}
+        </section>
+
+        <section className="work-surface question-analysis-column">
+          <div className="section-heading">
+            <div>
+              <h2>观点地图</h2>
+              <p>共识、分歧、少数派和适用条件。</p>
+            </div>
+            {analysis?.opinion_map_version && <span className="section-caption">v{analysis.opinion_map_version}</span>}
+          </div>
+          {analysisQuery.isLoading ? (
+            <LoadingBlock rows={12} />
+          ) : analysisQuery.isError ? (
+            <ErrorState error={analysisQuery.error} onRetry={() => void analysisQuery.refetch()} />
+          ) : (
+            <OpinionMapPanel
+              analysis={analysis}
+              onChanged={async () => {
+                await Promise.all([
+                  queryClient.invalidateQueries({ queryKey: ["analysis", id] }),
+                  queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+                ]);
+              }}
+            />
+          )}
+        </section>
+
+        <aside className="work-surface question-analysis-column question-analysis-column--rail">
+          <div className="section-heading">
+            <h2>任务、模型与费用</h2>
+            {task && <StatusTag status={task.status} />}
+          </div>
+          {!task ? (
+            <p className="section-empty">尚未创建任务。点击“开始完整分析”后可查看实时阶段。</p>
+          ) : (
+            <>
+              <Progress
+                percent={task.progress}
+                status={task.status === "failed" ? "exception" : task.progress === 100 ? "success" : "active"}
+              />
+              <Descriptions column={1} size="small">
+                <Descriptions.Item label="当前阶段"><StatusTag status={task.stage} /></Descriptions.Item>
+                <Descriptions.Item label="Worker">{task.worker_id || "等待分配"}</Descriptions.Item>
+                <Descriptions.Item label="重试次数">{task.retry_count} / {task.max_retries}</Descriptions.Item>
+                <Descriptions.Item label="采集方式">{task.result.collector_mode || "等待采集"}</Descriptions.Item>
+                <Descriptions.Item label="模型调用">{analysis?.model_usage.calls ?? 0} 次</Descriptions.Item>
+                <Descriptions.Item label="Token">
+                  {(analysis?.model_usage.input_tokens ?? 0).toLocaleString()} 输入 /
+                  {" "}{(analysis?.model_usage.output_tokens ?? 0).toLocaleString()} 输出
+                </Descriptions.Item>
+                <Descriptions.Item label="估算费用">
+                  ¥{(analysis?.model_usage.estimated_cost ?? 0).toFixed(4)}
+                </Descriptions.Item>
+              </Descriptions>
+              <h3>任务日志</h3>
+              <Timeline
+                items={(task.logs ?? []).map((log) => ({
+                  color: log.level === "error" ? "red" : log.level === "warning" ? "orange" : "blue",
+                  content: (
+                    <div className="task-log-item">
+                      <time>{formatDateTime(log.created_at)}</time>
+                      <p>{log.message}</p>
+                    </div>
+                  ),
+                }))}
+              />
+            </>
+          )}
+        </aside>
+      </div>
+    </div>
+  );
+}
