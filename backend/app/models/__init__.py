@@ -10,6 +10,7 @@ from backend.app.models.content import (
     OpinionMap,
     QuestionScore,
 )
+from backend.app.models.browser_bridge import BrowserBridgeClient, CollectionJob
 from backend.app.models.core import (
     ArticleDraft,
     ArticleVersion,
@@ -44,9 +45,11 @@ __all__ = [
     "ArticleVersion",
     "AuditLog",
     "BrowserSession",
+    "BrowserBridgeClient",
     "Claim",
     "ClaimCluster",
     "ClaimEmbedding",
+    "CollectionJob",
     "ClusterAnswerLink",
     "DailyPlan",
     "ImageDraft",

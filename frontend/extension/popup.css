@@ -1,0 +1,16 @@
+:root { font-family: Inter, "Microsoft YaHei", sans-serif; color: #172033; background: #f4f7fb; }
+body { margin: 0; width: 340px; }
+main { padding: 18px; display: grid; gap: 12px; }
+header h1 { margin: 4px 0 0; font-size: 20px; }
+.eyebrow { color: #1769e0; font-size: 11px; font-weight: 700; letter-spacing: .12em; }
+.status-card { display: flex; gap: 10px; align-items: flex-start; padding: 12px; border: 1px solid #d9e2ef; background: white; border-radius: 10px; }
+.status-card p { margin: 4px 0 0; color: #667085; font-size: 12px; line-height: 1.5; }
+.dot { width: 10px; height: 10px; margin-top: 4px; border-radius: 50%; background: #f0a020; box-shadow: 0 0 0 4px #fff1d6; }
+.dot.connected { background: #16a36a; box-shadow: 0 0 0 4px #dff8ec; }
+label { display: grid; gap: 6px; color: #475467; font-size: 12px; font-weight: 600; }
+input { border: 1px solid #ccd6e3; border-radius: 8px; padding: 9px 10px; font: inherit; background: white; }
+button { border: 1px solid #c9d5e5; border-radius: 8px; padding: 9px 12px; background: white; color: #263247; cursor: pointer; font-weight: 600; }
+button.primary { background: #1769e0; border-color: #1769e0; color: white; }
+button.danger { color: #c4322f; }
+button:disabled { opacity: .45; cursor: not-allowed; }
+.notice { margin: 0; color: #667085; font-size: 11px; line-height: 1.6; }

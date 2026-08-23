@@ -181,14 +181,6 @@ export interface ClaimCluster {
   }>;
 }
 
-export interface HotQuestionFetchResult {
-  fetched: number;
-  created: number;
-  updated: number;
-  collector_mode: string;
-  warnings: string[];
-}
-
 export interface ModelUsageSummary {
   calls: number;
   input_tokens: number;
@@ -445,6 +437,55 @@ export interface ManagedBrowserSession {
   message: string;
   qr_code_url: string | null;
   updated_at: string;
+}
+
+export interface BrowserBridgeStatus {
+  connection: "connected" | "disconnected" | "unpaired";
+  zhihu_auth:
+    | "authenticated"
+    | "login_required"
+    | "verification_required"
+    | "unknown";
+  extension_version: string;
+  last_seen_at: string | null;
+  last_check_at: string | null;
+  active_job_id: string | null;
+  message: string;
+}
+
+export interface BridgePairing {
+  pairing_code: string;
+  expires_at: string;
+  websocket_url: string;
+  message: string;
+}
+
+export interface ImportBundleV1 {
+  format: "ImportBundleV1";
+  version: 1;
+  collected_at: string;
+  mode: "representative" | "complete";
+  question: {
+    id: string;
+    title: string;
+    url?: string;
+    detail?: string;
+    excerpt?: string;
+    answer_count?: number;
+    follower_count?: number;
+  };
+  answers: Array<{
+    id: string;
+    question_id: string;
+    author?: { name?: string; url_token?: string };
+    url?: string;
+    content?: string;
+    voteup_count?: number;
+    comment_count?: number;
+    created_time?: number | null;
+    updated_time?: number | null;
+  }>;
+  warnings?: string[];
 }
 
 export interface OpenSourceReference {

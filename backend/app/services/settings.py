@@ -197,15 +197,21 @@ async def update_public_settings(
     if values.get("provider_mode") == "codex" and not CodexProvider.status(settings)["ok"]:
         raise ValueError("Codex 模式需要安装 Codex CLI 并登录当前 ChatGPT 账号")
     current = await public_settings(session, settings)
-    question_limit = int(
-        values.get("daily_question_limit", current.daily_question_limit)
-    )
-    hot_quota = int(values.get("hot_question_quota", current.hot_question_quota))
-    manual_quota = int(
-        values.get("manual_question_quota", current.manual_question_quota)
-    )
-    if hot_quota + manual_quota > question_limit:
-        raise ValueError("热门配额与手动配额之和不能超过每日问题数")
+    quota_keys = {
+        "daily_question_limit",
+        "hot_question_quota",
+        "manual_question_quota",
+    }
+    if quota_keys.intersection(values):
+        question_limit = int(
+            values.get("daily_question_limit", current.daily_question_limit)
+        )
+        hot_quota = int(values.get("hot_question_quota", current.hot_question_quota))
+        manual_quota = int(
+            values.get("manual_question_quota", current.manual_question_quota)
+        )
+        if hot_quota + manual_quota > question_limit:
+            raise ValueError("热门配额与手动配额之和不能超过每日问题数")
     auto_production = bool(
         values.get("auto_production_enabled", current.auto_production_enabled)
     )

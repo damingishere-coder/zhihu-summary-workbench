@@ -15,6 +15,9 @@ Set-Location -LiteralPath $RepoRoot
 
 Set-Location -LiteralPath $FrontendRoot
 & npm.cmd run typecheck
+& npm.cmd run typecheck:extension
+& npm.cmd run test:extension
+& npm.cmd run build:extension
 & npm.cmd run test:run
 & npm.cmd run build
 & npm.cmd run test:sites

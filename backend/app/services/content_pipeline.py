@@ -97,20 +97,25 @@ async def fetch_and_store_answers(
     request: FetchAnswersRequest,
     *,
     collector: ZhihuCollector | None = None,
+    precollected: ZhihuFetchResult | None = None,
 ) -> tuple[ZhihuFetchResult, dict[str, int]]:
-    runtime = await configured_settings_copy(session, settings)
-    active_collector = collector or ZhihuCollector(runtime)
     if not question.external_id:
         raise ValueError("问题缺少知乎 question id，无法采集回答")
-    result = await active_collector.fetch_question_and_answers(
-        question.external_id,
-        max_answers=request.max_answers,
-        mode=request.mode,
-        collector_mode=request.collector_mode,
-    )
+    if precollected is None:
+        runtime = await configured_settings_copy(session, settings)
+        active_collector = collector or ZhihuCollector(runtime)
+        result = await active_collector.fetch_question_and_answers(
+            question.external_id,
+            max_answers=request.max_answers,
+            mode=request.mode,
+            collector_mode=request.collector_mode,
+        )
+    else:
+        result = precollected
     if result.question:
         incoming = result.question
         question.title = incoming.title or question.title
+        question.url = incoming.url or question.url
         question.description = incoming.description or question.description
         question.hot_rank = incoming.hot_rank
         question.hot_score = incoming.hot_score

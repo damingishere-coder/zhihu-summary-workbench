@@ -6,7 +6,7 @@ import {
 import { PERMANENT_DELETE_WARNING } from "./QuestionsPage";
 
 
-describe("知乎扫码登录页面辅助逻辑", () => {
+describe("Chrome 扩展桥接页面辅助逻辑", () => {
   it("只允许返回工作台内部路径", () => {
     expect(safeBrowserReturnPath("/questions/q1")).toBe("/questions/q1");
     expect(safeBrowserReturnPath("//example.com")).toBe("/tasks");
@@ -14,12 +14,10 @@ describe("知乎扫码登录页面辅助逻辑", () => {
     expect(safeBrowserReturnPath(null)).toBe("/tasks");
   });
 
-  it("仅在启动和等待扫码时持续轮询", () => {
-    expect(shouldPollBrowserSession("starting")).toBe(true);
-    expect(shouldPollBrowserSession("qr_ready")).toBe(true);
-    expect(shouldPollBrowserSession("scanned")).toBe(true);
-    expect(shouldPollBrowserSession("authenticated")).toBe(false);
-    expect(shouldPollBrowserSession("failed")).toBe(false);
+  it("配对后持续刷新扩展实时状态", () => {
+    expect(shouldPollBrowserSession("connected")).toBe(true);
+    expect(shouldPollBrowserSession("disconnected")).toBe(true);
+    expect(shouldPollBrowserSession("unpaired")).toBe(false);
   });
 });
 

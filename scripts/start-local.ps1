@@ -32,7 +32,8 @@ function Stop-ProcessTree {
 foreach ($RequiredPort in @(8000, 4173)) {
     $ExistingListener = Get-NetTCPConnection -State Listen -LocalPort $RequiredPort -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($ExistingListener) {
-        throw "端口 $RequiredPort 已被占用。请先停止现有服务，再启动本项目。"
+        $Owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($ExistingListener.OwningProcess)" -ErrorAction SilentlyContinue
+        throw "端口 $RequiredPort 已被 PID $($ExistingListener.OwningProcess) 占用。命令：$($Owner.CommandLine)。脚本不会自动停止其他项目进程。"
     }
 }
 
@@ -72,7 +73,13 @@ try {
     $BackendReady = $false
     for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
         try {
-            Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 2 | Out-Null
+            $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 2
+            if ($Health.app_id -ne "zhihu-summary-workbench") {
+                throw "8000 端口返回了其他应用：$($Health.app_id)"
+            }
+            if ($Health.database_revision -ne "20260823_0005") {
+                throw "数据库版本不正确：$($Health.database_revision)"
+            }
             $BackendReady = $true
             break
         }

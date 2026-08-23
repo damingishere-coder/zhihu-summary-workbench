@@ -1,11 +1,10 @@
 import {
   ArrowLeftOutlined,
+  ApiOutlined,
   FileTextOutlined,
   LinkOutlined,
   PlayCircleOutlined,
-  QrcodeOutlined,
   ReloadOutlined,
-  SafetyCertificateOutlined,
 } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -97,18 +96,6 @@ export function QuestionDetailPage() {
     },
     onError: (error) => message.error(error.message),
   });
-  const verificationRecoveryMutation = useMutation({
-    mutationFn: async (waitingTaskId: string) => {
-      await api.recheckBrowserSession();
-      return waitingTaskId;
-    },
-    onSuccess: (waitingTaskId) => {
-      navigate(
-        `/settings/browser?taskId=${encodeURIComponent(waitingTaskId)}&recovery=verification&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
-      );
-    },
-    onError: (error) => message.error(error.message),
-  });
   const answerToggle = useMutation({
     mutationFn: ({ answerId, included }: { answerId: string; included: boolean }) =>
       included ? api.includeAnswer(answerId) : api.excludeAnswer(answerId),
@@ -139,6 +126,7 @@ export function QuestionDetailPage() {
   const draftId = analysis?.latest_draft_id ?? question.latest_draft_id;
   const waitingForLogin = task?.status === "waiting_login";
   const waitingForVerification = task?.status === "waiting_verification";
+  const waitingForBrowser = task?.status === "waiting_browser";
 
   return (
     <div className="page">
@@ -208,18 +196,18 @@ export function QuestionDetailPage() {
           type="warning"
           showIcon
           title="任务正在等待知乎登录"
-          description={task.error_message ?? "请使用知乎 App 扫码登录后继续任务。"}
+          description={task.error_message ?? "请在正常 Chrome 知乎标签页完成登录后继续任务。"}
           action={
             <Button
               type="primary"
-              icon={<QrcodeOutlined />}
+              icon={<ApiOutlined />}
               onClick={() =>
                 navigate(
                   `/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
                 )
               }
             >
-              去扫码登录
+              打开 Chrome 扩展设置
             </Button>
           }
         />
@@ -231,23 +219,48 @@ export function QuestionDetailPage() {
           showIcon
           title="任务正在等待人工验证"
           description={
-            `这表示本次采集请求被知乎拦截，不代表账号已经退出。系统会先检查现有登录会话，只有知乎明确返回未登录时才会要求扫码。${
+            `这表示知乎在正常 Chrome 标签页中要求人工处理，不代表账号已经退出。请在同一个知乎标签页完成验证，再让扩展重新采集。${
               task.error_message ? ` 本次记录：${task.error_message}` : ""
             }`
           }
           action={
             <Button
               type="primary"
-              icon={<SafetyCertificateOutlined />}
-              loading={verificationRecoveryMutation.isPending}
-              onClick={() => verificationRecoveryMutation.mutate(task.id)}
+              icon={<ApiOutlined />}
+              onClick={() =>
+                navigate(
+                  `/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+                )
+              }
             >
-              我已完成验证，重新检查并继续
+              打开扩展设置并继续
             </Button>
           }
         />
       )}
-      {task?.error_message && !waitingForLogin && !waitingForVerification && (
+      {waitingForBrowser && task && (
+        <Alert
+          className="phase-alert"
+          type="info"
+          showIcon
+          title="任务正在等待 Chrome 扩展"
+          description={task.error_message ?? "Worker 已释放；扩展回传回答后任务会自动重新入队。"}
+          action={
+            <Button
+              type="primary"
+              icon={<ApiOutlined />}
+              onClick={() =>
+                navigate(
+                  `/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=${encodeURIComponent(`/questions/${id}`)}`,
+                )
+              }
+            >
+              连接扩展或导入 JSON
+            </Button>
+          }
+        />
+      )}
+      {task?.error_message && !waitingForLogin && !waitingForVerification && !waitingForBrowser && (
         <Alert
           className="phase-alert"
           type="error"

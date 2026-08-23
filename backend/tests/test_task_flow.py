@@ -13,7 +13,6 @@ from backend.app.collectors.zhihu import (
 from backend.app.core.config import get_settings
 from backend.app.db.session import get_session_factory
 from backend.app.services.tasks import process_task
-from backend.app.services import tasks as task_service
 
 
 class FakeZhihuCollector:
@@ -239,7 +238,6 @@ async def test_cancelled_task_can_retry_and_preserves_retry_count(app_client) ->
 @pytest.mark.asyncio
 async def test_login_required_task_resumes_without_consuming_retry(
     app_client,
-    monkeypatch,
 ) -> None:
     _, client, broker = app_client
     created = await client.post(
@@ -267,45 +265,19 @@ async def test_login_required_task_resumes_without_consuming_retry(
     assert waiting.json()["status"] == "waiting_login"
     assert waiting.json()["retry_count"] == 0
 
-    monkeypatch.setattr(
-        task_service,
-        "managed_browser_session_is_authenticated",
-        lambda: False,
-    )
-    blocked = await client.post(f"/api/tasks/{task_id}/resume-after-login")
-    assert blocked.status_code == 409
-    assert "登录尚未完成" in blocked.json()["detail"]
-
-    monkeypatch.setattr(
-        task_service,
-        "managed_browser_session_is_authenticated",
-        lambda: True,
-    )
-    resumed = await client.post(f"/api/tasks/{task_id}/resume-after-login")
+    resumed = await client.post(f"/api/tasks/{task_id}/retry-collection")
     assert resumed.status_code == 200, resumed.text
-    assert resumed.json()["status"] == "queued"
-    assert resumed.json()["retry_count"] == 0
-    assert await broker.dequeue(timeout=1) == task_id
-
-    repeated = await client.post(f"/api/tasks/{task_id}/resume-after-login")
-    assert repeated.status_code == 200, repeated.text
-    assert repeated.json()["status"] == "queued"
-    assert repeated.json()["retry_count"] == 0
-    assert await broker.dequeue(timeout=0.01) is None
+    assert resumed.json()["status"] == "waiting_browser"
+    assert resumed.json()["dispatched"] is False
 
     detail = await client.get(f"/api/tasks/{task_id}")
-    resume_logs = [
-        item
-        for item in detail.json()["logs"]
-        if "任务自动恢复" in item["message"]
-    ]
-    assert len(resume_logs) == 1
+    assert detail.json()["retry_count"] == 0
+    assert "Chrome 扩展" in detail.json()["logs"][-1]["message"]
 
 
 @pytest.mark.asyncio
 async def test_verification_task_resumes_once_without_relogin_or_retry(
     app_client,
-    monkeypatch,
 ) -> None:
     _, client, broker = app_client
     created = await client.post(
@@ -344,29 +316,10 @@ async def test_verification_task_resumes_once_without_relogin_or_retry(
     )
     assert wrong_endpoint.status_code == 409
 
-    monkeypatch.setattr(
-        task_service,
-        "managed_browser_session_is_authenticated",
-        lambda: True,
-    )
-    resumed = await client.post(
-        f"/api/tasks/{task_id}/resume-after-verification"
-    )
+    resumed = await client.post(f"/api/tasks/{task_id}/retry-collection")
     assert resumed.status_code == 200, resumed.text
-    assert resumed.json()["status"] == "queued"
-    assert resumed.json()["retry_count"] == 0
-    assert await broker.dequeue(timeout=1) == task_id
-
-    repeated = await client.post(
-        f"/api/tasks/{task_id}/resume-after-verification"
-    )
-    assert repeated.status_code == 200, repeated.text
-    assert await broker.dequeue(timeout=0.01) is None
+    assert resumed.json()["status"] == "waiting_browser"
 
     detail = await client.get(f"/api/tasks/{task_id}")
-    resume_logs = [
-        item
-        for item in detail.json()["logs"]
-        if "确认完成知乎安全验证" in item["message"]
-    ]
-    assert len(resume_logs) == 1
+    assert detail.json()["retry_count"] == 0
+    assert "Chrome 扩展" in detail.json()["logs"][-1]["message"]

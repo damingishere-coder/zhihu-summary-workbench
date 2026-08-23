@@ -130,14 +130,6 @@ async def test_embedded_worker_uses_shared_broker_and_stops_on_memory_lifespan(
     monkeypatch.setattr(app_main, "run_worker_loop", fake_embedded_worker)
 
     app = app_main.create_app()
-    browser_shutdown_count = 0
-
-    async def fake_browser_shutdown() -> None:
-        nonlocal browser_shutdown_count
-        browser_shutdown_count += 1
-
-    app.state.zhihu_browser_session.shutdown = fake_browser_shutdown
-
     async with app_main.lifespan(app):
         await asyncio.wait_for(embedded_started.wait(), timeout=1)
         assert observed["broker"] is broker
@@ -149,7 +141,6 @@ async def test_embedded_worker_uses_shared_broker_and_stops_on_memory_lifespan(
     assert app.state.worker_task.done()
     assert broker.close_count == 1
     assert dispose_count == 1
-    assert browser_shutdown_count == 1
 
 
 @pytest.mark.asyncio
@@ -185,8 +176,6 @@ async def test_redis_lifespan_does_not_start_an_embedded_worker(
     monkeypatch.setattr(app_main, "run_worker_loop", fake_embedded_worker)
 
     app = app_main.create_app()
-    app.state.zhihu_browser_session.shutdown = _noop
-
     async with app_main.lifespan(app):
         await asyncio.sleep(0)
         assert app.state.worker_task is None

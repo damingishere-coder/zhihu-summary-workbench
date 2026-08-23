@@ -41,7 +41,9 @@ Write-Output "Database migration completed"
 foreach ($RequiredPort in @(8000, 4173)) {
     $ExistingListener = Get-NetTCPConnection -State Listen -LocalPort $RequiredPort -ErrorAction SilentlyContinue
     if ($ExistingListener) {
-        throw "Port $RequiredPort is already in use. Stop the existing process before starting this project."
+        $FirstListener = $ExistingListener | Select-Object -First 1
+        $Owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($FirstListener.OwningProcess)" -ErrorAction SilentlyContinue
+        throw "端口 $RequiredPort 已被 PID $($FirstListener.OwningProcess) 占用。命令：$($Owner.CommandLine)。脚本不会自动停止其他项目进程。"
     }
 }
 
@@ -78,7 +80,13 @@ Set-Content -LiteralPath (Join-Path $LogsRoot "frontend.pid") -Value $Frontend.I
 
 Start-Sleep -Seconds 2
 try {
-    Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 10 | Out-Null
+    $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 10
+    if ($Health.app_id -ne "zhihu-summary-workbench") {
+        throw "8000 端口返回了其他应用：$($Health.app_id)"
+    }
+    if ($Health.database_revision -ne "20260823_0005") {
+        throw "数据库版本不正确：$($Health.database_revision)"
+    }
 }
 catch {
     throw "Backend failed to start. Check logs\backend-error.log. Error: $($_.Exception.Message)"

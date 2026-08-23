@@ -56,32 +56,38 @@ class FakeBrowserSession:
 
 @pytest.mark.asyncio
 async def test_browser_session_status_start_and_qr(app_client, tmp_path) -> None:
-    app, client, _ = app_client
-    qr_path = tmp_path / "login.png"
-    qr_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
-    app.state.zhihu_browser_session = FakeBrowserSession(qr_path)
+    _, client, _ = app_client
+    requests = [
+        ("GET", "/api/settings/browser/session"),
+        ("POST", "/api/settings/browser/session/start"),
+        ("POST", "/api/settings/browser/session/refresh"),
+        ("POST", "/api/settings/browser/session/recheck"),
+        ("GET", "/api/settings/browser/session/qr"),
+    ]
+    for method, path in requests:
+        response = await client.request(method, path)
+        assert response.status_code == 410
+        assert "Chrome 扩展" in response.json()["detail"]
 
-    initial = await client.get("/api/settings/browser/session")
-    assert initial.status_code == 200
-    assert initial.json()["state"] == "idle"
 
-    started = await client.post("/api/settings/browser/session/start")
-    assert started.status_code == 200
-    assert started.json()["state"] == "qr_ready"
-
-    qr = await client.get("/api/settings/browser/session/qr")
-    assert qr.status_code == 200
-    assert qr.headers["cache-control"].startswith("no-store")
-    assert qr.content.startswith(b"\x89PNG")
-
-    refreshed = await client.post("/api/settings/browser/session/refresh")
-    assert refreshed.status_code == 200
-    assert refreshed.json()["state"] == "starting"
-
-    rechecked = await client.post("/api/settings/browser/session/recheck")
-    assert rechecked.status_code == 200
-    assert rechecked.json()["state"] == "starting"
-    assert rechecked.json()["authenticated"] is False
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/api/questions/hot/fetch", {"limit": 20, "collector_mode": "auto"}),
+        (
+            "/api/questions/does-not-matter/fetch-answers",
+            {"mode": "representative", "max_answers": 20, "collector_mode": "auto"},
+        ),
+    ],
+)
+async def test_legacy_playwright_collection_routes_return_gone(
+    app_client, path, payload
+) -> None:
+    _, client, _ = app_client
+    response = await client.post(path, json=payload)
+    assert response.status_code == 410
+    assert "Playwright" in response.json()["detail"]
 
 
 def test_normal_sms_login_copy_is_not_treated_as_risk_verification() -> None:

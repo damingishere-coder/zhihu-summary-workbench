@@ -4,6 +4,7 @@ from backend.app.api.routes import (
     analysis,
     answers,
     browser,
+    browser_bridge,
     dashboard,
     drafts,
     health,
@@ -28,4 +29,5 @@ api_router.include_router(images.router)
 api_router.include_router(publish.router)
 api_router.include_router(settings.router)
 api_router.include_router(browser.router)
+api_router.include_router(browser_bridge.router)
 api_router.include_router(prompts.router)

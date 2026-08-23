@@ -18,8 +18,8 @@
 - 仪表盘、问题池、问题详情、任务中心、草稿审核、发布准备和设置；
 - 亮色/暗色模式、加载/空/错误/禁用/危险确认状态；
 - Windows PowerShell 启动和测试脚本；
-- 知乎 API 与用户本地已登录 Chrome 会话双模式采集；
-- 问题池中的知乎热榜同步入口；
+- Manifest V3 Chrome 扩展通过用户正常知乎标签页同源采集；
+- 问题池支持手动添加和批量导入；旧 Playwright 热榜同步已停用，扩展 v1 暂不采集热榜；
 - HTML 清洗、Markdown/纯文本转换、媒体提取、内容哈希去重和基础过滤；
 - 批量回答质量筛选和观点提取；
 - 本地多语言字符 n-gram Embedding、向量缓存和余弦粗聚类；
@@ -131,15 +131,25 @@ Set-Location ..
 
 成功时会显示安装的软件包数量。
 
-### 4. 安装 Playwright 的 Chrome 支持
+### 4. 准备信息图渲染浏览器
 
 ```powershell
-.\.venv\Scripts\python.exe -m playwright install chrome
+.\.venv\Scripts\python.exe -m playwright install chromium
 ```
 
-这条命令安装浏览器采集和第三阶段信息图 PNG 渲染所需的驱动。成功时不会出现红色错误。渲染任务使用独立后台浏览器，不依赖知乎登录；知乎页面辅助模式仍只使用用户明确配置的本机目录。
+Playwright 固定为 `1.61.0`，只负责信息图 PNG 渲染。本机优先探测系统 Chrome；Docker 镜像安装与 Python 包匹配的 Chromium。知乎采集不再使用 Playwright。
 
-### 5. 启动全部开发服务
+### 5. 构建并安装 Chrome 扩展
+
+```powershell
+Set-Location .\frontend
+npm.cmd run build:extension
+Set-Location ..
+```
+
+然后打开 `chrome://extensions`，开启“开发者模式”，点击“加载已解压的扩展程序”，选择 `frontend\dist\extension`。回到工作台“设置 → 浏览器与发布”，生成一次性配对码并粘贴到扩展弹窗。
+
+### 6. 启动全部开发服务
 
 先确认 Docker Desktop 已打开，再运行：
 
@@ -171,7 +181,7 @@ Redis 已就绪
 
 运行日志在 `logs/` 目录。
 
-### 6. 停止开发服务
+### 7. 停止开发服务
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\stop-dev.ps1
@@ -241,17 +251,15 @@ DEEPSEEK_OUTPUT_COST_PER_MILLION=
 
 ## 知乎采集与安全边界
 
-知乎接口可能要求登录或返回访问限制。系统按以下顺序工作：
+知乎接口可能要求登录或返回访问限制。新主流程如下：
 
-1. 已有工作台登录会话时，直接使用专属浏览器读取正常可见页面，避免重复匿名请求；
-2. 尚未登录时才尝试公开接口；接口需要登录后，引导用户使用知乎 App 扫码；
-3. 只有知乎明确跳转登录页或返回未登录时，才把会话标记为失效；
-4. 验证码或安全验证只暂停本次任务，不删除仍然有效的登录状态；
-5. 用户完成验证后，点击“我已完成验证，重新检查并继续”恢复原任务；
-6. 不破解验证码，不保存账号密码，不实现代理池、账号池或设备指纹伪造；
-7. 已采集回答、任务日志和失败原因会保留，限制解除后可重试。
-
-工作台专属浏览器资料只保存在本机 `data/browser` 目录。不要把该目录复制到云盘或提交到 Git。
+1. Chrome 扩展在用户正常登录的知乎问题标签页中执行同源请求；
+2. 扩展只回传白名单化的问题/回答字段，不读取或上传 Cookie、密码和 Token；
+3. `401`、登录页跳转、`403` 和验证页分别暂停为等待登录或等待人工验证，不消耗任务失败重试；
+4. 代表性模式最多采集 20 条；完整模式仅在知乎同源回答接口可用时启用；
+5. 知乎仍阻断时可导出/导入 `ImportBundleV1` JSON，但界面会明确标注人工来源，不冒充实时自动采集；
+6. 不破解签名或验证码，不使用隐身浏览器、代理池、账号池或设备指纹伪造；
+7. 旧 `data/browser` 资料原样保留，但不再作为登录有效的依据。
 
 ## 草稿中的手动图片 Prompt
 
@@ -338,7 +346,7 @@ Get-Content .\logs\worker-error.log -Tail 100
 .\.venv\Scripts\python.exe -m alembic upgrade head
 ```
 
-成功时会显示当前 revision `20260724_0003 (head)`。不要直接删除有业务数据的数据库文件。
+成功时会显示当前 revision `20260823_0005 (head)`。不要直接删除有业务数据的数据库文件。
 
 ## 安全边界
 
@@ -362,10 +370,14 @@ Get-Content .\logs\worker-error.log -Tail 100
 | SQLAlchemy | ORM | MIT |
 | Alembic | 数据库迁移 | MIT |
 | Redis 官方容器 | 队列和 Pub/Sub | 以所用 Redis 版本官方授权为准 |
-| Microsoft Playwright | 本地已登录浏览器采集降级 | Apache-2.0 |
+| Microsoft Playwright 1.61.0 | 仅用于信息图 PNG 渲染 | Apache-2.0 |
 | Pillow | 本地生成上传背景缩略图 | MIT-CMU |
+| OpenBiliClaw `f001c1f` | 借鉴扩展任务下发、同源请求、不导出 Cookie 和真实扩展 E2E 架构；自行实现 | MIT |
+| RSSHub 知乎路由 `5151c32` | 仅参考分页、Cookie 有效性检查和接口封装行为；未复制代码 | AGPL-3.0 |
+| zhihu-hot-hub `ec324e6` | 未来热榜种子/归档研究，不代替回答采集 | MIT |
+| Zhihu++ `80a0971` | 仅研究内容模型和登录体验；未复制代码 | AGPL-3.0 |
 
-完整依赖和精确版本以 `requirements*.txt`、`frontend/package-lock.json` 和已安装包许可证文件为准。后续阶段若借鉴规格列出的 GitHub 项目，必须先记录项目、版本和许可证；无明确许可证时只参考思路并自行重写。
+以上参考版本记录于 2026-08-23。本仓库没有复制四个参考项目的代码；MIT 项目只借鉴架构，AGPL 项目仅观察公开行为。完整依赖和精确版本以 `requirements*.txt`、`frontend/package-lock.json` 和已安装包许可证文件为准。
 
 ## 设计与进度文档
 

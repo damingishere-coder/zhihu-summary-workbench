@@ -1,5 +1,8 @@
 import pytest
 
+from backend.app.db.session import get_session_factory
+from backend.app.models.core import SystemSetting
+
 
 @pytest.mark.asyncio
 async def test_mock_model_endpoint_and_public_settings(app_client) -> None:
@@ -38,3 +41,24 @@ async def test_deepseek_mode_cannot_be_saved_without_key(app_client) -> None:
     )
     assert response.status_code == 400
     assert "DEEPSEEK_API_KEY" in response.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_unrelated_setting_can_repair_legacy_inconsistent_quotas(app_client) -> None:
+    _, client, _ = app_client
+    async with get_session_factory()() as session:
+        for key, value in {
+            "daily_question_limit": 1,
+            "hot_question_quota": 6,
+            "manual_question_quota": 4,
+        }.items():
+            item = await session.get(SystemSetting, key)
+            assert item is not None
+            item.value = value
+        await session.commit()
+
+    response = await client.patch(
+        "/api/settings", json={"request_timeout_seconds": 300}
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["request_timeout_seconds"] == 300

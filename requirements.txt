@@ -4,7 +4,7 @@ fastapi>=0.115,<1
 httpx>=0.28,<1
 orjson>=3.10,<4
 Pillow>=11,<13
-playwright>=1.54,<2
+playwright==1.61.0
 pydantic-settings>=2.8,<3
 python-multipart>=0.0.20,<1
 redis>=5.2,<7

@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from backend.app.api.dependencies import get_broker
 from backend.app.db.session import get_db_session
 from backend.app.models.core import TaskJob
+from backend.app.schemas.browser_bridge import RetryCollectionResponse
 from backend.app.schemas.task import QueueStatus, TaskListResponse, TaskRead, WorkerRead
 from backend.app.services.queue import QueueBroker
 from backend.app.services.serializers import task_to_read
@@ -18,6 +19,7 @@ from backend.app.services.tasks import (
     cancel_task,
     resume_task_after_login,
     resume_task_after_verification,
+    retry_collection_task,
     retry_task,
 )
 
@@ -92,6 +94,38 @@ async def retry_failed_task(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     task = await load_task(session, task_id)
     return task_to_read(task)
+
+
+@router.post(
+    "/tasks/{task_id}/retry-collection",
+    response_model=RetryCollectionResponse,
+)
+async def retry_task_collection(
+    task_id: str,
+    session: AsyncSession = Depends(get_db_session),
+    broker: QueueBroker = Depends(get_broker),
+) -> RetryCollectionResponse:
+    task = await load_task(session, task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    try:
+        job, dispatched = await retry_collection_task(session, broker, task)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return RetryCollectionResponse(
+        task_id=task.id,
+        collection_job_id=job.id,
+        status=task.status,
+        dispatched=dispatched,
+        message=(
+            "已使用安全保存的采集结果恢复任务"
+            if job.status == "completed"
+            else
+            "采集任务已发送到 Chrome 扩展"
+            if dispatched
+            else "采集任务已保存；请连接 Chrome 扩展后继续"
+        ),
+    )
 
 
 @router.post("/tasks/{task_id}/cancel", response_model=TaskRead)

@@ -5,7 +5,6 @@ import type {
   ClaimCluster,
   Draft,
   DraftVersion,
-  HotQuestionFetchResult,
   InfographicContent,
   ImageWorkspace,
   ImportResult,
@@ -21,6 +20,9 @@ import type {
   PromptVersion,
   BrowserSafetyState,
   ManagedBrowserSession,
+  BrowserBridgeStatus,
+  BridgePairing,
+  ImportBundleV1,
   OpenSourceReference,
   Question,
   Task,
@@ -84,14 +86,6 @@ export const api = {
   answers: (id: string, filters: Record<string, string | number | undefined> = {}) =>
     request<AnswerList>(`/questions/${id}/answers${queryString(filters)}`),
   analysis: (id: string) => request<AnalysisOverview>(`/questions/${id}/analysis`),
-  fetchHotQuestions: (payload: {
-    limit: number;
-    collector_mode: "auto" | "api" | "browser";
-  }) =>
-    request<HotQuestionFetchResult>("/questions/hot/fetch", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    }),
   includeAnswer: (id: string) =>
     request(`/answers/${id}/include`, { method: "POST" }),
   excludeAnswer: (id: string) =>
@@ -380,6 +374,40 @@ export const api = {
   recheckBrowserSession: () =>
     request<ManagedBrowserSession>("/settings/browser/session/recheck", {
       method: "POST",
+    }),
+  browserBridgeStatus: () =>
+    request<BrowserBridgeStatus>("/settings/browser/bridge"),
+  createBridgePairing: () =>
+    request<BridgePairing>("/settings/browser/bridge/pairing", {
+      method: "POST",
+    }),
+  unpairBridge: () =>
+    request<{ revoked_clients: number; message: string }>(
+      "/settings/browser/bridge/unpair",
+      { method: "POST" },
+    ),
+  retryCollection: (taskId: string) =>
+    request<{
+      task_id: string;
+      collection_job_id: string;
+      status: string;
+      dispatched: boolean;
+      message: string;
+    }>(`/tasks/${taskId}/retry-collection`, { method: "POST" }),
+  importAnswers: (questionId: string, bundle: ImportBundleV1) =>
+    request<{
+      question_id: string;
+      collection_job_id: string;
+      resumed_task_id: string | null;
+      fetched: number;
+      created: number;
+      updated: number;
+      included: number;
+      filtered: number;
+      message: string;
+    }>(`/questions/${questionId}/answers/import`, {
+      method: "POST",
+      body: JSON.stringify(bundle),
     }),
   openSourceReferences: () =>
     request<OpenSourceReference[]>("/open-source-references"),

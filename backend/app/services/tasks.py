@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 
-from sqlalchemy import select, update
+from pydantic import ValidationError
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -16,6 +16,8 @@ from backend.app.core.config import Settings
 from backend.app.core.state_machine import assert_task_transition
 from backend.app.models.common import utc_now
 from backend.app.models.core import Question, TaskJob, TaskLog
+from backend.app.models.browser_bridge import CollectionJob
+from backend.app.schemas.browser_bridge import ImportBundleV1
 from backend.app.schemas.analysis import FetchAnswersRequest
 from backend.app.services.content_pipeline import (
     evaluate_answers,
@@ -29,8 +31,10 @@ from backend.app.services.content_pipeline import (
     usage_summary,
 )
 from backend.app.services.queue import QueueBroker
-from backend.app.services.browser_session import (
-    managed_browser_session_is_authenticated,
+from backend.app.services.browser_bridge import (
+    bridge_manager,
+    bundle_to_fetch_result,
+    create_collection_job,
 )
 
 
@@ -186,7 +190,6 @@ async def resume_task_after_login(
         task,
         waiting_status=LOGIN_WAITING_STATUS,
         invalid_status_message="只有等待知乎登录的任务可以通过登录恢复",
-        resume_log_message="知乎登录已完成，任务自动恢复且不计入失败重试次数",
     )
 
 
@@ -201,10 +204,70 @@ async def resume_task_after_verification(
         task,
         waiting_status=VERIFICATION_WAITING_STATUS,
         invalid_status_message="只有等待人工验证的任务可以通过验证确认恢复",
-        resume_log_message=(
-            "用户已确认完成知乎安全验证，任务重新入队且不计入失败重试次数"
-        ),
     )
+
+
+async def retry_collection_task(
+    session: AsyncSession,
+    broker: QueueBroker,
+    task: TaskJob,
+) -> tuple[CollectionJob, bool]:
+    allowed = {
+        "waiting_browser",
+        "waiting_login",
+        "waiting_verification",
+        "failed",
+        "cancelled",
+    }
+    if task.status not in allowed:
+        raise ValueError("只有等待浏览器、登录、验证或已停止的任务可以重新采集")
+    existing_job_id = str((task.payload or {}).get("collection_job_id") or "")
+    existing_job = (
+        await session.get(CollectionJob, existing_job_id)
+        if existing_job_id
+        else None
+    )
+    if existing_job and existing_job.status == "completed":
+        task.status = "queued"
+        task.stage = "queued"
+        task.worker_id = None
+        task.error_message = None
+        task.question.status = "queued"
+        await add_task_log(
+            session,
+            task,
+            stage="queued",
+            message="已使用安全保存的采集结果恢复任务，无需重复采集",
+            metadata={"collection_job_id": existing_job.id},
+        )
+        await session.commit()
+        try:
+            await broker.enqueue(task.id)
+        except Exception as exc:
+            task.status = "waiting_browser"
+            task.stage = "waiting_browser"
+            task.error_message = "采集结果已保存，但任务队列仍不可用"
+            task.question.status = "waiting_browser"
+            await session.commit()
+            raise ValueError(task.error_message) from exc
+        return existing_job, False
+    mode = str((task.payload or {}).get("fetch_mode", "representative"))
+    max_answers = min(20, int((task.payload or {}).get("max_answers", 20)))
+    job = await create_collection_job(
+        session,
+        task,
+        mode=mode,
+        max_answers=max_answers,
+    )
+    dispatched_client_id = await bridge_manager.dispatch_job(job)
+    dispatched = bool(dispatched_client_id)
+    if dispatched_client_id:
+        job.status = "dispatched"
+        job.client_id = dispatched_client_id
+        job.dispatched_at = utc_now()
+        await session.commit()
+    await publish_task_state(broker, task)
+    return job, dispatched
 
 
 async def _resume_waiting_task(
@@ -214,51 +277,12 @@ async def _resume_waiting_task(
     *,
     waiting_status: str,
     invalid_status_message: str,
-    resume_log_message: str,
 ) -> TaskJob:
     if task.status in ALREADY_RESUMED_STATUSES:
         return task
     if task.status != waiting_status:
         raise ValueError(invalid_status_message)
-    if not managed_browser_session_is_authenticated():
-        raise ValueError(
-            "知乎登录尚未完成或状态尚未确认，请先重新检查登录状态"
-        )
-    assert_task_transition(task.status, "queued")
-
-    claimed = await session.execute(
-        update(TaskJob)
-        .where(
-            TaskJob.id == task.id,
-            TaskJob.status == waiting_status,
-        )
-        .values(
-            status="queued",
-            stage="queued",
-            progress=0,
-            error_message=None,
-            cancel_requested=False,
-            worker_id=None,
-            started_at=None,
-            completed_at=None,
-        )
-    )
-    if claimed.rowcount != 1:
-        await session.refresh(task)
-        if task.status in ALREADY_RESUMED_STATUSES:
-            return task
-        raise ValueError("任务状态已变化，请刷新页面后重试")
-
-    await session.refresh(task)
-    task.question.status = "queued"
-    await add_task_log(
-        session,
-        task,
-        stage="queued",
-        message=resume_log_message,
-    )
-    await session.commit()
-    await broker.enqueue(task.id)
+    await retry_collection_task(session, broker, task)
     return task
 
 
@@ -268,7 +292,7 @@ async def cancel_task(
     if task.status in {"waiting_review", "review_approved", "failed", "cancelled"}:
         raise ValueError("当前任务状态不能取消")
     task.cancel_requested = True
-    if task.status in {"queued", "waiting_login", "waiting_verification"}:
+    if task.status in {"queued", "waiting_browser", "waiting_login", "waiting_verification"}:
         assert_task_transition(task.status, "cancelled")
         task.status = "cancelled"
         task.stage = "cancelled"
@@ -388,6 +412,44 @@ async def process_task(
             task.status = "fetching_answers"
             task.question.status = "fetching_answers"
             await session.commit()
+            precollected = None
+            if collector is None:
+                collection_job_id = str((task.payload or {}).get("collection_job_id") or "")
+                collection_job = (
+                    await session.get(CollectionJob, collection_job_id)
+                    if collection_job_id
+                    else None
+                )
+                if collection_job is None or collection_job.status != "completed":
+                    collection_job = await create_collection_job(
+                        session,
+                        task,
+                        mode=str(task.payload.get("fetch_mode", "representative")),
+                        max_answers=min(
+                            20,
+                            int(task.payload.get("max_answers", settings.max_answers_per_question)),
+                        ),
+                    )
+                    dispatched_client_id = await bridge_manager.dispatch_job(collection_job)
+                    if dispatched_client_id:
+                        collection_job.status = "dispatched"
+                        collection_job.client_id = dispatched_client_id
+                        collection_job.dispatched_at = utc_now()
+                        await session.commit()
+                    await publish_task_state(broker, task)
+                    return
+                try:
+                    bundle = ImportBundleV1.model_validate(collection_job.result_json)
+                except ValidationError as exc:
+                    raise ValueError("已保存的扩展采集结果格式无效") from exc
+                precollected = bundle_to_fetch_result(
+                    bundle,
+                    collector_mode=(
+                        "chrome_extension"
+                        if collection_job.source == "extension"
+                        else "json_import"
+                    ),
+                )
             fetch_result, fetch_counts = await fetch_and_store_answers(
                 session,
                 task.question,
@@ -404,6 +466,7 @@ async def process_task(
                     ),
                 ),
                 collector=collector,
+                precollected=precollected,
             )
             if fetch_counts["included"] < 1:
                 raise ValueError("没有采集到可分析的有效回答")

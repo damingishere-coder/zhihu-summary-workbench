@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import base64
 import html
+import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -323,10 +325,41 @@ li {{
 
 
 async def _launch_browser(playwright) -> Browser:
-    try:
-        return await playwright.chromium.launch(channel="chrome", headless=True)
-    except Exception:
-        return await playwright.chromium.launch(headless=True)
+    errors: list[str] = []
+    for executable in _system_chrome_candidates():
+        try:
+            return await playwright.chromium.launch(
+                executable_path=str(executable), headless=True
+            )
+        except Exception as exc:
+            errors.append(f"{executable}: {exc}")
+    bundled = Path(playwright.chromium.executable_path)
+    if bundled.is_file():
+        try:
+            return await playwright.chromium.launch(headless=True)
+        except Exception as exc:
+            errors.append(f"{bundled}: {exc}")
+    raise RuntimeError(
+        "信息图渲染浏览器不可用；未找到可启动的系统 Chrome 或匹配当前 Playwright 的 Chromium。"
+        + (f" 探测详情：{' | '.join(errors)}" if errors else "")
+    )
+
+
+def _system_chrome_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    for executable in ("chrome", "google-chrome", "google-chrome-stable"):
+        resolved = shutil.which(executable)
+        if resolved:
+            candidates.append(Path(resolved))
+    for variable in ("PROGRAMFILES", "PROGRAMFILES(X86)", "LOCALAPPDATA"):
+        root = os.environ.get(variable)
+        if root:
+            candidates.append(
+                Path(root) / "Google" / "Chrome" / "Application" / "chrome.exe"
+            )
+    return list(
+        dict.fromkeys(path.resolve() for path in candidates if path.is_file())
+    )
 
 
 async def render_infographic(

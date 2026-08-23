@@ -13,7 +13,7 @@ from backend.app.core.logging import configure_logging
 from backend.app.db.session import dispose_engines, get_session_factory
 from backend.app.services.queue import create_queue_broker
 from backend.app.services.seed import seed_defaults
-from backend.app.services.browser_session import ManagedZhihuBrowserSession
+from backend.app.services.browser_bridge import run_bridge_dispatch_loop
 from backend.app.worker.main import run_worker_loop
 
 
@@ -40,6 +40,20 @@ async def _stop_embedded_worker(app: FastAPI) -> None:
             await worker_task
 
 
+async def _stop_bridge_dispatcher(app: FastAPI) -> None:
+    stop_event = getattr(app.state, "bridge_stop_event", None)
+    task = getattr(app.state, "bridge_dispatch_task", None)
+    if stop_event is None or task is None or task.done():
+        return
+    stop_event.set()
+    try:
+        await asyncio.wait_for(asyncio.shield(task), timeout=3)
+    except asyncio.TimeoutError:
+        task.cancel()
+        with suppress(asyncio.CancelledError):
+            await task
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = get_settings()
@@ -47,9 +61,18 @@ async def lifespan(app: FastAPI):
     app.state.broker = broker
     app.state.worker_task = None
     app.state.worker_stop_event = None
+    app.state.bridge_stop_event = asyncio.Event()
+    app.state.bridge_dispatch_task = None
     try:
         async with get_session_factory()() as session:
             await seed_defaults(session)
+        app.state.bridge_dispatch_task = asyncio.create_task(
+            run_bridge_dispatch_loop(
+                stop_event=app.state.bridge_stop_event,
+                session_factory=get_session_factory(),
+            ),
+            name="browser-bridge-dispatcher",
+        )
         if settings.queue_backend == "memory":
             stop_event = asyncio.Event()
             app.state.worker_stop_event = stop_event
@@ -70,7 +93,7 @@ async def lifespan(app: FastAPI):
             await _stop_embedded_worker(app)
         finally:
             try:
-                await app.state.zhihu_browser_session.shutdown()
+                await _stop_bridge_dispatcher(app)
             finally:
                 try:
                     await broker.close()
@@ -82,11 +105,10 @@ def create_app() -> FastAPI:
     settings = get_settings()
     app = FastAPI(
         title=settings.app_name,
-        version="0.3.0",
-        description="知乎问题总结工作台第三阶段 API",
+        version="0.4.0",
+        description="知乎问题总结工作台 Chrome 扩展桥接 API",
         lifespan=lifespan,
     )
-    app.state.zhihu_browser_session = ManagedZhihuBrowserSession()
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,

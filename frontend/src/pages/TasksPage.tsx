@@ -1,4 +1,5 @@
 import {
+  ApiOutlined,
   CloseCircleOutlined,
   EyeOutlined,
   ReloadOutlined,
@@ -20,6 +21,7 @@ import {
   Tooltip,
 } from "antd";
 import { useMemo, useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
 import { ProgressCell } from "../components/ProgressCell";
@@ -41,11 +43,17 @@ const cancellableStatuses = [
   "generating_opinion_map",
   "generating_article",
   "reviewing_article",
+  "waiting_browser",
+  "waiting_login",
+  "waiting_verification",
 ];
+
+const browserWaitingStatuses = ["waiting_browser", "waiting_login", "waiting_verification"];
 
 export function TasksPage() {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [status, setStatus] = useState("");
   const [search, setSearch] = useState("");
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -121,7 +129,7 @@ export function TasksPage() {
       title: "开始时间",
       dataIndex: "started_at",
       key: "started_at",
-      width: 120,
+      width: 150,
       responsive: ["xl" as const],
       render: (value: string | null) => formatDateTime(value, true),
     },
@@ -172,6 +180,16 @@ export function TasksPage() {
               onClick={() => retry.mutate(task.id)}
             />
           </Tooltip>
+          {browserWaitingStatuses.includes(task.status) && (
+            <Tooltip title="用 Chrome 扩展继续">
+              <Button
+                type="text"
+                aria-label="用 Chrome 扩展继续"
+                icon={<ApiOutlined />}
+                onClick={() => navigate(`/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=/tasks`)}
+              />
+            </Tooltip>
+          )}
           <Tooltip title={cancellableStatuses.includes(task.status) ? "取消任务" : "当前状态不能取消"}>
             <Button
               type="text"
@@ -209,6 +227,9 @@ export function TasksPage() {
               { value: "", label: "状态：全部" },
               { value: "queued", label: "队列中" },
               { value: "fetching_answers", label: "采集回答" },
+              { value: "waiting_browser", label: "等待 Chrome 扩展" },
+              { value: "waiting_login", label: "等待知乎登录" },
+              { value: "waiting_verification", label: "等待人工验证" },
               { value: "extracting_claims", label: "观点提取" },
               { value: "refining_clusters", label: "聚类修正" },
               { value: "generating_article", label: "生成文章" },

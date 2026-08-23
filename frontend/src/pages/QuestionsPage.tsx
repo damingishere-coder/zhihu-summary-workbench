@@ -1,7 +1,6 @@
 import {
   DeleteOutlined,
   EyeOutlined,
-  FireOutlined,
   MoreOutlined,
   PlayCircleOutlined,
   SearchOutlined,
@@ -104,20 +103,6 @@ export function QuestionsPage() {
     },
     onError: (error) => message.error(error.message),
   });
-  const hotMutation = useMutation({
-    mutationFn: () =>
-      api.fetchHotQuestions({ limit: 20, collector_mode: "auto" }),
-    onSuccess: async (result) => {
-      message.success(
-        `热榜同步完成：新增 ${result.created} 条，更新 ${result.updated} 条`,
-      );
-      result.warnings.forEach((warning) => message.warning(warning));
-      setSource("hot");
-      await refresh();
-    },
-    onError: (error) => message.error(error.message),
-  });
-
   const columns = [
     {
       title: "问题标题",
@@ -241,13 +226,9 @@ export function QuestionsPage() {
         description="管理热门问题、手动推荐和已进入处理流程的问题。"
         actions={
           <Space wrap>
-            <Button
-              icon={<FireOutlined />}
-              loading={hotMutation.isPending}
-              onClick={() => hotMutation.mutate()}
-            >
-              同步知乎热榜
-            </Button>
+            <Tooltip title="扩展协议 v1 暂不采集热榜，请使用手动添加或批量导入">
+              <Button disabled>知乎热榜暂不可用</Button>
+            </Tooltip>
             <AddQuestionButton onClick={() => setAddOpen(true)} />
             <ImportQuestionsButton onClick={() => setImportOpen(true)} />
           </Space>

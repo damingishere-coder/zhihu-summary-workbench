@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from datetime import datetime, timezone
 
 from backend.app.ai.providers.base import ProviderError
 from backend.app.ai.providers.factory import create_structured_provider
@@ -15,6 +16,7 @@ from backend.app.schemas.settings import (
     PublicSettings,
     SettingsUpdate,
 )
+from backend.app.models.core import SystemSetting
 from backend.app.services.settings import (
     configured_settings_copy,
     public_settings,
@@ -64,6 +66,24 @@ async def test_model(
     except ProviderError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     usage = result.usage
+    if mode != "mock":
+        item = await session.get(SystemSetting, "model_last_real_validation")
+        value = {
+            "provider": usage.provider,
+            "model": usage.model,
+            "verified_at": datetime.now(timezone.utc).isoformat(),
+        }
+        if item:
+            item.value = value
+        else:
+            session.add(
+                SystemSetting(
+                    key="model_last_real_validation",
+                    value=value,
+                    is_secret=False,
+                )
+            )
+        await session.commit()
     return ModelTestResponse(
         success=True,
         provider=usage.provider,
@@ -80,4 +100,3 @@ async def test_model(
             estimated_cost=usage.estimated_cost,
         ),
     )
-

@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     )
 
     app_name: str = "知乎问题总结工作台"
+    app_id: str = "zhihu-summary-workbench"
     app_env: Literal["development", "test", "production"] = "development"
     app_host: str = "127.0.0.1"
     app_port: int = 8000

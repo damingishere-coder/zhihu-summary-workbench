@@ -4,6 +4,7 @@ import asyncio
 import json
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
 import time
@@ -118,7 +119,10 @@ class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
             if output_schema is not None:
                 schema_path = Path(temp_dir) / "output.schema.json"
                 schema_path.write_text(
-                    json.dumps(output_schema.model_json_schema(), ensure_ascii=False),
+                    json.dumps(
+                        _strict_json_schema(output_schema.model_json_schema()),
+                        ensure_ascii=False,
+                    ),
                     encoding="utf-8",
                 )
                 command.extend(["--output-schema", str(schema_path)])
@@ -135,9 +139,9 @@ class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
                         env=environment,
                         stdin=asyncio.subprocess.PIPE,
                         stdout=asyncio.subprocess.DEVNULL,
-                        stderr=asyncio.subprocess.DEVNULL,
+                        stderr=asyncio.subprocess.PIPE,
                     )
-                    await asyncio.wait_for(
+                    _, stderr = await asyncio.wait_for(
                         process.communicate(prompt.encode("utf-8")),
                         timeout=max(10, self.settings.codex_timeout_seconds),
                     )
@@ -152,7 +156,11 @@ class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
                     raise ProviderResponseError("Codex CLI 无法启动，请检查 CODEX_PATH") from exc
 
             if process.returncode != 0:
-                raise ProviderResponseError(f"Codex CLI 执行失败（退出码 {process.returncode}）")
+                detail = _safe_cli_error(stderr)
+                suffix = f"：{detail}" if detail else ""
+                raise ProviderResponseError(
+                    f"Codex CLI 执行失败（退出码 {process.returncode}）{suffix}"
+                )
             if not output_path.is_file():
                 raise ProviderResponseError("Codex CLI 未生成最终结果文件")
             result = output_path.read_text(encoding="utf-8").strip()
@@ -180,6 +188,77 @@ def _strip_json_fence(text: str) -> str:
     if lines and lines[-1].strip() == "```":
         lines = lines[:-1]
     return "\n".join(lines).strip()
+
+
+def _safe_cli_error(stderr: bytes) -> str:
+    """只保留 CLI 自身错误行，避免把不可信回答或完整 prompt 写入日志。"""
+
+    text = stderr.decode("utf-8", errors="replace")
+    safe_lines: list[str] = []
+    for error_block in text.split("ERROR:")[1:]:
+        message_match = re.search(
+            r'"message"\s*:\s*"((?:\\.|[^"\\])*)"',
+            error_block[:8000],
+        )
+        if not message_match:
+            continue
+        try:
+            message = json.loads(f'"{message_match.group(1)}"')
+        except json.JSONDecodeError:
+            continue
+        lowered_message = message.lower()
+        if any(
+            marker in lowered_message
+            for marker in (
+                "schema",
+                "response_format",
+                "model",
+                "authentication",
+                "rate limit",
+                "context length",
+                "unsupported",
+                "invalid request",
+            )
+        ):
+            safe_lines.append(f"ERROR: {message}")
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        lowered = line.lower()
+        if re.match(r"^(error|fatal|failed|warning)\b", lowered) or any(
+            marker in lowered
+            for marker in (
+                "unexpected status",
+                "invalid output schema",
+                "authentication failed",
+                "rate limit",
+            )
+        ):
+            if line not in {"ERROR: {", "ERROR:{"}:
+                safe_lines.append(line)
+    return " | ".join(dict.fromkeys(safe_lines[-4:]))[:1200]
+
+
+def _strict_json_schema(value: object) -> object:
+    """把 Pydantic schema 收窄为 Codex 严格结构化输出接受的形式。"""
+
+    if isinstance(value, list):
+        return [_strict_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    cleaned = {
+        key: _strict_json_schema(item)
+        for key, item in value.items()
+        if key != "default"
+    }
+    if cleaned.get("type") == "object" or "properties" in cleaned:
+        properties = cleaned.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+            cleaned["properties"] = properties
+        cleaned["required"] = list(properties)
+        cleaned["additionalProperties"] = False
+    return cleaned
 
 
 def _build_prompt(system_prompt: str, user_prompt: str, *, structured: bool) -> str:

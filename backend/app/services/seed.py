@@ -54,7 +54,7 @@ OPEN_SOURCE_REFERENCES = (
         "Microsoft Playwright",
         "Apache-2.0",
         "https://github.com/microsoft/playwright",
-        "第二阶段使用用户本地已登录 Chrome 会话作为知乎采集安全降级模式。",
+        "仅用于信息图 PNG 渲染；知乎采集不再使用独立 Playwright 浏览器。",
     ),
     (
         "Pillow",
@@ -62,7 +62,39 @@ OPEN_SOURCE_REFERENCES = (
         "https://github.com/python-pillow/Pillow",
         "第三阶段仅用于为用户上传的背景原图生成本地缩略图。",
     ),
+    (
+        "OpenBiliClaw",
+        "MIT",
+        "https://github.com/whiteguo233/OpenBiliClaw",
+        "仅借鉴扩展任务下发、同源 credentials 请求、不导出 Cookie 和扩展 E2E 的架构；本项目自行实现，未复制代码。",
+    ),
+    (
+        "RSSHub 知乎路由",
+        "AGPL-3.0",
+        "https://github.com/DIYgod/RSSHub/tree/master/lib/routes/zhihu",
+        "仅参考回答分页、Cookie 有效性检查和接口集中封装行为；未复制或引入 AGPL 代码。",
+    ),
+    (
+        "zhihu-hot-hub",
+        "MIT",
+        "https://github.com/SnailDev/zhihu-hot-hub",
+        "仅作为未来知乎热榜种子和归档来源研究，不用于回答采集。",
+    ),
+    (
+        "Zhihu++",
+        "AGPL-3.0",
+        "https://github.com/zly2006/zhihu-plus-plus",
+        "仅研究活跃知乎客户端的内容模型和登录体验；未复制或引入 AGPL 代码。",
+    ),
 )
+
+OPEN_SOURCE_REFERENCE_VERSIONS = {
+    "Microsoft Playwright": "1.61.0",
+    "OpenBiliClaw": "f001c1f899645a6139995e7d7b047510d9e3a3a5",
+    "RSSHub 知乎路由": "5151c3233bc7bacfaecc6e4f01aba2b60022d683",
+    "zhihu-hot-hub": "ec324e653c03a7127d63134bb052dbc46dce38de",
+    "Zhihu++": "80a097116a069b00a0c4b2bdaee7a944551820fb",
+}
 
 
 PHASE_TWO_PROMPTS = (
@@ -253,6 +285,9 @@ async def seed_defaults(session: AsyncSession) -> None:
     for name, license_name, source_url, usage_note in OPEN_SOURCE_REFERENCES:
         existing = existing_references.get(name)
         if existing:
+            existing.version = OPEN_SOURCE_REFERENCE_VERSIONS.get(
+                name, existing.version
+            )
             existing.license_name = license_name
             existing.source_url = source_url
             existing.usage_note = usage_note
@@ -260,6 +295,9 @@ async def seed_defaults(session: AsyncSession) -> None:
             session.add(
                 OpenSourceReference(
                     name=name,
+                    version=OPEN_SOURCE_REFERENCE_VERSIONS.get(
+                        name, "not-pinned"
+                    ),
                     license_name=license_name,
                     source_url=source_url,
                     usage_note=usage_note,

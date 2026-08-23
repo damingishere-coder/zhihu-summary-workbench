@@ -29,6 +29,7 @@ const statusMap: Record<
   reviewing_article: { label: "独立审核", color: "processing", icon: <SyncOutlined spin /> },
   saving_result: { label: "保存结果", color: "processing", icon: <SyncOutlined spin /> },
   waiting_review: { label: "待审核", color: "warning", icon: <ClockCircleFilled /> },
+  waiting_browser: { label: "等待 Chrome 扩展", color: "warning", icon: <PauseCircleFilled /> },
   waiting_login: { label: "等待知乎登录", color: "warning", icon: <PauseCircleFilled /> },
   waiting_verification: { label: "等待人工验证", color: "warning", icon: <PauseCircleFilled /> },
   review_rejected: { label: "已退回", color: "error", icon: <CloseCircleFilled /> },

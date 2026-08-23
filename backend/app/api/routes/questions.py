@@ -8,9 +8,8 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.api.dependencies import get_broker
 from backend.app.core.config import Settings, get_settings
-from backend.app.collectors.zhihu import ZhihuCollector
 from backend.app.db.session import get_db_session
-from backend.app.models.core import ArticleDraft, Question, QuestionSource, TaskJob
+from backend.app.models.core import ArticleDraft, Question, TaskJob
 from backend.app.schemas.analysis import HotQuestionFetchRequest, HotQuestionFetchResponse
 from backend.app.schemas.question import (
     QuestionCreate,
@@ -27,10 +26,8 @@ from backend.app.services.question_deletion import permanently_delete_question
 from backend.app.services.questions import (
     create_question,
     import_questions,
-    question_hash,
     update_question,
 )
-from backend.app.services.settings import configured_settings_copy
 from backend.app.services.serializers import task_to_read
 from backend.app.services.tasks import create_task
 
@@ -98,72 +95,13 @@ async def list_questions(
 @router.post("/hot/fetch", response_model=HotQuestionFetchResponse)
 async def fetch_hot_questions(
     payload: HotQuestionFetchRequest,
-    session: AsyncSession = Depends(get_db_session),
-    settings: Settings = Depends(get_settings),
 ) -> HotQuestionFetchResponse:
-    runtime = await configured_settings_copy(session, settings)
-    collector = ZhihuCollector(runtime)
-    try:
-        collected, used_mode, warnings = await collector.fetch_hot_questions(
-            limit=payload.limit,
-            collector_mode=payload.collector_mode,
-        )
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    created = 0
-    updated = 0
-    for item in collected:
-        question = await session.scalar(
-            select(Question).where(Question.external_id == item.external_id)
-        )
-        if question:
-            question.title = item.title
-            question.description = item.description or question.description
-            question.hot_rank = item.hot_rank
-            question.hot_score = item.hot_score
-            question.answer_count = item.answer_count
-            question.follower_count = item.follower_count
-            question.source = "hot"
-            question.content_hash = question_hash(
-                question.title, question.url, question.description
-            )
-            updated += 1
-        else:
-            question = Question(
-                external_id=item.external_id,
-                title=item.title,
-                url=item.url,
-                description=item.description,
-                sample_answer="",
-                source="hot",
-                status="candidate",
-                priority="medium",
-                content_hash=question_hash(
-                    item.title, item.url, item.description
-                ),
-                hot_rank=item.hot_rank,
-                hot_score=item.hot_score,
-                answer_count=item.answer_count,
-                follower_count=item.follower_count,
-            )
-            session.add(question)
-            await session.flush()
-            created += 1
-        session.add(
-            QuestionSource(
-                question_id=question.id,
-                source_type=f"hot_{used_mode}",
-                source_url=item.url,
-                raw_data=item.raw_snapshot,
-            )
-        )
-    await session.commit()
-    return HotQuestionFetchResponse(
-        fetched=len(collected),
-        created=created,
-        updated=updated,
-        collector_mode=used_mode,
-        warnings=warnings,
+    raise HTTPException(
+        status_code=410,
+        detail=(
+            "旧的 Playwright 热榜同步已停用。扩展协议 v1 暂不采集热榜，"
+            "请先手动添加问题或批量导入问题列表。"
+        ),
     )
 
 

@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>知乎总结工作台桥接</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main>
+      <header><span class="eyebrow">LOCAL BRIDGE</span><h1>知乎总结工作台</h1></header>
+      <section class="status-card">
+        <span id="status-dot" class="dot"></span>
+        <div><strong id="status-title">正在读取状态</strong><p id="status-message">请稍候</p></div>
+      </section>
+      <label>本机工作台地址<input id="workbench-url" value="http://127.0.0.1:8000" /></label>
+      <label>一次性配对码<input id="pairing-code" maxlength="8" placeholder="例如 A1B2C3D4" /></label>
+      <button id="pair-button" class="primary">配对并连接</button>
+      <button id="check-button">检查知乎登录</button>
+      <button id="export-button" disabled>导出最近采集 JSON</button>
+      <button id="forget-button" class="danger">清除本机扩展令牌</button>
+      <p class="notice">扩展不会读取或上传 Cookie、密码与 Token；知乎验证需要你本人在正常标签页处理。</p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>
