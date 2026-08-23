@@ -251,6 +251,8 @@ async def _runtime_provider(
     fingerprint = ":".join(
         (
             mode,
+            runtime.codex_model,
+            runtime.codex_path,
             runtime.deepseek_fast_model,
             runtime.deepseek_reasoning_model,
             runtime.deepseek_fallback_model,

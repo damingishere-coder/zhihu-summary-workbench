@@ -65,7 +65,23 @@ FastAPI
 C:\Users\你的用户名\Documents\zhihu-summary-workbench
 ```
 
-### 推荐：Docker 一键启动
+### 日常本机开发：memory 模式（无需 Docker）
+
+本机开发默认使用进程内 memory 队列：FastAPI 会在同一进程内启动共享 Broker 的 Worker，不需要 Redis、Docker 或独立 Worker。
+
+完成后端 `.venv` 和 `frontend\node_modules` 安装后，在项目根目录运行：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\start-local.ps1
+```
+
+脚本会执行数据库迁移，启动 `127.0.0.1:8000` 的 FastAPI 与 `127.0.0.1:4173` 的 Vite，并把 PID 和日志写入已忽略的 `logs/` 目录。停止本机服务：
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\stop-local.ps1
+```
+
+### 完整集成/部署回退：Docker 一键启动
 
 只需要安装并打开 Docker Desktop，不需要另外安装 Python、Node.js 或 Playwright。
 
@@ -76,7 +92,7 @@ C:\Users\你的用户名\Documents\zhihu-summary-workbench
 
 Docker 会启动 Redis、FastAPI 后端、Worker 和 Nginx 前端。真实 API 密钥仍只保存在本机 `.env` 中，不会写入镜像。
 
-以下手动步骤仅用于不使用 Docker 的本机开发模式。
+以下步骤用于需要 Redis 与独立 Worker 的完整 Docker 集成模式；日常本机开发请优先使用上面的 `start-local.ps1`。
 
 ### 1. 检查基础软件
 
@@ -84,7 +100,7 @@ Docker 会启动 Redis、FastAPI 后端、Worker 和 Nginx 前端。真实 API �
 
 - Python 3.12；
 - Node.js 20 或更高；
-- Docker Desktop。
+- Docker Desktop（仅运行完整集成模式时需要）。
 
 在 PowerShell 中运行：
 

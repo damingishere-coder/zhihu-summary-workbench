@@ -484,7 +484,9 @@ export interface Worker {
 }
 
 export interface PublicSettings {
-  provider_mode: "mock" | "deepseek";
+  provider_mode: "mock" | "codex" | "deepseek";
+  codex_configured: boolean;
+  codex_model: string;
   deepseek_configured: boolean;
   deepseek_base_url: string;
   fast_text_model: string;

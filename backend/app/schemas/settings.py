@@ -8,7 +8,9 @@ from backend.app.schemas.ai import AnswerClaimExtraction, ModelUsage
 
 
 class PublicSettings(BaseModel):
-    provider_mode: Literal["mock", "deepseek"]
+    provider_mode: Literal["mock", "codex", "deepseek"]
+    codex_configured: bool
+    codex_model: str
     deepseek_configured: bool
     deepseek_base_url: str
     fast_text_model: str
@@ -37,7 +39,8 @@ class PublicSettings(BaseModel):
 
 
 class SettingsUpdate(BaseModel):
-    provider_mode: Literal["mock", "deepseek"] | None = None
+    provider_mode: Literal["mock", "codex", "deepseek"] | None = None
+    codex_model: str | None = Field(default=None, min_length=1, max_length=128)
     fast_text_model: str | None = Field(default=None, min_length=1, max_length=128)
     reasoning_model: str | None = Field(default=None, min_length=1, max_length=128)
     fallback_text_model: str | None = Field(default=None, min_length=1, max_length=128)
@@ -74,7 +77,7 @@ class SettingsUpdate(BaseModel):
 
 
 class ModelTestRequest(BaseModel):
-    provider_mode: Literal["mock", "deepseek"] | None = None
+    provider_mode: Literal["mock", "codex", "deepseek"] | None = None
     question_title: str = Field(default="如何更高效地学习一项新技能？", min_length=1, max_length=500)
     sample_answer: str = Field(
         default="先明确目标，再把技能拆成可以每天练习的小步骤。持续获得反馈，比一次学习很久更重要。",
@@ -93,11 +96,14 @@ class ModelTestResponse(BaseModel):
 
 
 class SettingsValidation(BaseModel):
-    provider_mode: Literal["mock", "deepseek"]
+    provider_mode: Literal["mock", "codex", "deepseek"]
     deepseek_configured: bool
+    codex_configured: bool = False
 
     @model_validator(mode="after")
     def validate_provider(self) -> "SettingsValidation":
         if self.provider_mode == "deepseek" and not self.deepseek_configured:
             raise ValueError("DeepSeek 模式需要在本机 .env 中配置 DEEPSEEK_API_KEY")
+        if self.provider_mode == "codex" and not self.codex_configured:
+            raise ValueError("Codex 模式需要安装 Codex CLI 并登录当前 ChatGPT 账号")
         return self

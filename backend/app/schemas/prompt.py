@@ -65,7 +65,7 @@ class PromptActivateRequest(BaseModel):
 class PromptTestRequest(BaseModel):
     version: int | None = Field(default=None, ge=1)
     input: dict[str, Any] = Field(default_factory=dict)
-    provider_mode: Literal["mock", "deepseek"] | None = None
+    provider_mode: Literal["mock", "codex", "deepseek"] | None = None
 
 
 class PromptTestResponse(BaseModel):

@@ -184,13 +184,13 @@ export function SettingsPage({
               <div><h2>Provider 模式</h2><p>密钥只能从本机环境读取，页面和 API 永不回显。</p></div>
             </div>
             <Alert
-              type={query.data.deepseek_configured ? "success" : "info"}
+              type={query.data.codex_configured ? "success" : "warning"}
               showIcon
-              title={query.data.deepseek_configured ? "DeepSeek 密钥已在本机配置" : "当前未配置 DeepSeek 密钥"}
+              title={query.data.codex_configured ? "Codex CLI 已找到并复用本机登录态" : "Codex CLI 尚未就绪"}
               description={
-                query.data.deepseek_configured
-                  ? "可以切换到真实模式并测试结构化输出。"
-                  : "Mock 模式可完成第二阶段完整文本流水线测试；如需真实调用，请只在本机 .env 设置 DEEPSEEK_API_KEY。"
+                query.data.codex_configured
+                  ? "可以使用套餐内 Codex 用量执行本地批处理；DeepSeek 继续作为手动回退选项。"
+                  : "请先安装并登录 Codex；在此之前可继续使用 Mock，或手动选择已配置的 DeepSeek。"
               }
             />
             <Form
@@ -205,14 +205,16 @@ export function SettingsPage({
                   buttonStyle="solid"
                   options={[
                     { label: "Mock（推荐开发）", value: "mock" },
+                    { label: "Codex CLI（推荐本机）", value: "codex", disabled: !query.data.codex_configured },
                     { label: "DeepSeek 真实调用", value: "deepseek", disabled: !query.data.deepseek_configured },
                   ]}
                 />
               </Form.Item>
+              <Form.Item name="codex_model" label="Codex 模型"><Input /></Form.Item>
               <div className="settings-fields settings-fields--three">
-                <Form.Item name="fast_text_model" label="快速文本模型"><Input /></Form.Item>
-                <Form.Item name="reasoning_model" label="推理模型"><Input /></Form.Item>
-                <Form.Item name="fallback_text_model" label="备用文本模型"><Input /></Form.Item>
+                <Form.Item name="fast_text_model" label="DeepSeek 快速模型（回退）"><Input /></Form.Item>
+                <Form.Item name="reasoning_model" label="DeepSeek 推理模型（回退）"><Input /></Form.Item>
+                <Form.Item name="fallback_text_model" label="DeepSeek 备用模型"><Input /></Form.Item>
               </div>
               <div className="settings-fields settings-fields--three">
                 <Form.Item name="daily_model_budget" label="每日模型预算（0 表示不限）">
@@ -255,6 +257,7 @@ export function SettingsPage({
                   <Radio.Group
                     options={[
                       { label: "Mock", value: "mock" },
+                      { label: "Codex CLI", value: "codex", disabled: !query.data.codex_configured },
                       { label: "DeepSeek", value: "deepseek", disabled: !query.data.deepseek_configured },
                     ]}
                   />

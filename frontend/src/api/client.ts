@@ -285,7 +285,7 @@ export const api = {
       body: JSON.stringify(payload),
     }),
   testModel: (payload: {
-    provider_mode: "mock" | "deepseek";
+    provider_mode: "mock" | "codex" | "deepseek";
     question_title: string;
     sample_answer: string;
   }) =>

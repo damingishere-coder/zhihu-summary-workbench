@@ -32,10 +32,14 @@ class Settings(BaseSettings):
     deepseek_api_key: SecretStr | None = None
     deepseek_base_url: str = "https://api.deepseek.com"
     deepseek_fast_model: str = "deepseek-v4-flash"
-    deepseek_reasoning_model: str = "deepseek-v4-pro"
+    deepseek_reasoning_model: str = "deepseek-v4-flash"
     deepseek_fallback_model: str = "deepseek-v4-flash"
-    ai_provider_mode: Literal["mock", "deepseek"] = "mock"
+    ai_provider_mode: Literal["mock", "codex", "deepseek"] = "codex"
     ai_request_timeout_seconds: int = 60
+    codex_path: str = "codex"
+    codex_home: str = ""
+    codex_model: str = "gpt-5.6-sol"
+    codex_timeout_seconds: int = 300
     task_max_retries: int = 2
     answer_quality_batch_size: int = 8
     claim_extraction_batch_size: int = 5

@@ -429,7 +429,7 @@ ai:
 
   reasoning_model:
     provider: deepseek
-    model: deepseek-v4-pro
+    model: deepseek-v4-flash
 
   fallback_text_model:
     provider: deepseek
@@ -454,7 +454,7 @@ ai:
 
 ## 6.4 DeepSeek 分工
 
-`deepseek-v4-flash` 默认负责：
+`deepseek-v4-flash` 默认负责全部 DeepSeek 文本任务：
 
 - 问题分类；
 - 问题价值评分；
@@ -462,10 +462,7 @@ ai:
 - 批量观点提取；
 - 普通质量审核；
 - 信息图文案压缩；
-- 生图提示词生成。
-
-`deepseek-v4-pro` 默认负责：
-
+- 生图提示词生成；
 - 复杂长回答提取；
 - 聚类修正；
 - 共识与分歧识别；
@@ -1932,7 +1929,7 @@ REDIS_URL=
 DEEPSEEK_API_KEY=
 DEEPSEEK_BASE_URL=https://api.deepseek.com
 DEEPSEEK_FAST_MODEL=deepseek-v4-flash
-DEEPSEEK_REASONING_MODEL=deepseek-v4-pro
+DEEPSEEK_REASONING_MODEL=deepseek-v4-flash
 
 IMAGE_GENERATION_MODE=manual
 IMAGE_PROMPT_MODEL_ROLE=fast_text_model

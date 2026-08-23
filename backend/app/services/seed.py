@@ -14,6 +14,7 @@ from backend.app.ai.services.content import (
     REVIEW_SYSTEM_PROMPT,
     REWRITE_SYSTEM_PROMPT,
 )
+from backend.app.core.config import get_settings
 from backend.app.models.core import (
     OpenSourceReference,
     PromptTemplate,
@@ -159,7 +160,8 @@ IMAGE_TEMPLATES = (
 
 
 async def seed_defaults(session: AsyncSession) -> None:
-    for key, value in SETTING_DEFAULTS.items():
+    defaults = {**SETTING_DEFAULTS, "provider_mode": get_settings().ai_provider_mode}
+    for key, value in defaults.items():
         if not await session.get(SystemSetting, key):
             session.add(SystemSetting(key=key, value=value, is_secret=False))
 

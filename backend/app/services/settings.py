@@ -5,13 +5,16 @@ from urllib.parse import urlsplit
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.ai.providers.codex import CodexProvider
 from backend.app.core.config import Settings
 from backend.app.models.core import SystemSetting
 from backend.app.schemas.settings import PublicSettings, SettingsUpdate
 
 
 SETTING_DEFAULTS: dict[str, object] = {
-    "provider_mode": "mock",
+    # 默认改用本机 Codex；自动生产和自动发布仍为关闭，不会因启动服务自行消耗额度。
+    "provider_mode": "codex",
+    "codex_model": "gpt-5.6-sol",
     "daily_question_limit": 10,
     "hot_question_quota": 6,
     "manual_question_quota": 4,
@@ -60,8 +63,13 @@ def _display_redis_url(redis_url: str) -> str:
 async def public_settings(
     session: AsyncSession, settings: Settings
 ) -> PublicSettings:
+    codex_status = CodexProvider.status(settings)
     return PublicSettings(
         provider_mode=await provider_mode(session, settings),
+        codex_configured=bool(codex_status["ok"]),
+        codex_model=str(
+            await get_setting(session, "codex_model", settings.codex_model)
+        ),
         deepseek_configured=bool(settings.deepseek_key_value),
         deepseek_base_url=settings.deepseek_base_url,
         fast_text_model=str(
@@ -186,6 +194,8 @@ async def update_public_settings(
         raise ValueError(
             "DeepSeek 模式需要在本机 .env 中配置 DEEPSEEK_API_KEY；密钥不会通过页面保存"
         )
+    if values.get("provider_mode") == "codex" and not CodexProvider.status(settings)["ok"]:
+        raise ValueError("Codex 模式需要安装 Codex CLI 并登录当前 ChatGPT 账号")
     current = await public_settings(session, settings)
     question_limit = int(
         values.get("daily_question_limit", current.daily_question_limit)
@@ -216,6 +226,8 @@ async def configured_settings_copy(
     current = await public_settings(session, settings)
     return settings.model_copy(
         update={
+            "codex_model": current.codex_model,
+            "codex_timeout_seconds": current.request_timeout_seconds,
             "deepseek_fast_model": current.fast_text_model,
             "deepseek_reasoning_model": current.reasoning_model,
             "deepseek_fallback_model": current.fallback_text_model,
