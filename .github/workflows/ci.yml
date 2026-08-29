@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repository-hygiene:
+    name: Repository hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out full history
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Check changed text
+        shell: bash
+        run: |
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            base="$(git merge-base HEAD "origin/${{ github.base_ref }}")"
+            git diff --check "$base"..HEAD
+          else
+            git diff-tree --check --no-commit-id --root -r HEAD
+          fi
+
+      - name: Reject tracked local data and secrets
+        shell: bash
+        run: |
+          blocked="$(git ls-files | grep -Ei '(^|/)(\.env(\..*)?|.*\.(db|sqlite|sqlite3|log)|cookies.*\.json|.*storage-state.*\.json)$' || true)"
+          if [[ -n "$blocked" ]]; then
+            printf '%s\n' "$blocked"
+            exit 1
+          fi
