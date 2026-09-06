@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     ai_request_timeout_seconds: int = 60
     codex_path: str = "codex"
     codex_home: str = ""
-    codex_model: str = "gpt-5.6-sol"
+    codex_model: str = "gpt-6-astra"
     codex_timeout_seconds: int = 300
     task_max_retries: int = 2
     answer_quality_batch_size: int = 8

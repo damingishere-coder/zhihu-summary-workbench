@@ -14,7 +14,7 @@ from backend.app.schemas.settings import PublicSettings, SettingsUpdate
 SETTING_DEFAULTS: dict[str, object] = {
     # 默认改用本机 Codex；自动生产和自动发布仍为关闭，不会因启动服务自行消耗额度。
     "provider_mode": "codex",
-    "codex_model": "gpt-5.6-sol",
+    "codex_model": "gpt-6-astra",
     "daily_question_limit": 10,
     "hot_question_quota": 6,
     "manual_question_quota": 4,

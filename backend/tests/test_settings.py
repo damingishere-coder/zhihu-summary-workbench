@@ -11,7 +11,7 @@ async def test_mock_model_endpoint_and_public_settings(app_client) -> None:
     assert settings.status_code == 200
     assert settings.json()["provider_mode"] == "mock"
     assert isinstance(settings.json()["codex_configured"], bool)
-    assert settings.json()["codex_model"] == "gpt-5.6-sol"
+    assert settings.json()["codex_model"] == "gpt-6-astra"
     assert settings.json()["deepseek_configured"] is False
     assert settings.json()["fast_text_model"] == "deepseek-v4-flash"
     assert settings.json()["reasoning_model"] == "deepseek-v4-flash"
