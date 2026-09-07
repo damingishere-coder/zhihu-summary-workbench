@@ -149,6 +149,8 @@ class UsageBreakdown(BaseModel):
 
 
 class ModelUsageOverview(BaseModel):
+    cost_known: bool = True
+    usage_known: bool = True
     date: date
     calls: int
     input_tokens: int

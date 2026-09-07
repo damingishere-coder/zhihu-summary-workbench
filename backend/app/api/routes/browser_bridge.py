@@ -13,6 +13,7 @@ from backend.app.db.session import get_db_session, get_session_factory
 from backend.app.models.browser_bridge import BrowserBridgeClient, CollectionJob
 from backend.app.models.common import utc_now
 from backend.app.schemas.browser_bridge import (
+    BrowserCaptureSummary,
     BrowserBridgeStatus,
     MAX_BRIDGE_PAYLOAD_BYTES,
     PairingStartResponse,
@@ -57,6 +58,9 @@ async def get_bridge_status(
         .order_by(CollectionJob.created_at)
         .limit(1)
     )
+    latest_job = await session.scalar(
+        select(CollectionJob).order_by(CollectionJob.created_at.desc()).limit(1)
+    )
     if not connected:
         message = "扩展已配对但当前未连接"
     elif client.zhihu_auth == "authenticated":
@@ -69,11 +73,26 @@ async def get_bridge_status(
         message = "扩展在线，等待知乎实时登录检查"
     return BrowserBridgeStatus(
         connection="connected" if connected else "disconnected",
-        zhihu_auth=client.zhihu_auth,
+        zhihu_auth=client.zhihu_auth if connected else "unknown",
         extension_version=client.extension_version,
         last_seen_at=client.last_seen_at,
         last_check_at=client.last_check_at,
         active_job_id=active_job.id if active_job else None,
+        latest_capture=(
+            BrowserCaptureSummary(
+                job_id=latest_job.id,
+                status=latest_job.status,
+                source=latest_job.source,
+                capture_version=latest_job.capture_version,
+                capture_method=latest_job.capture_method,
+                page_url=latest_job.capture_page_url,
+                visible_answer_count=latest_job.visible_answer_count,
+                collected_answer_count=latest_job.collected_answer_count,
+                diagnostics=latest_job.capture_diagnostics_json or [],
+            )
+            if latest_job
+            else None
+        ),
         message=message,
     )
 
@@ -179,15 +198,13 @@ async def _dispatch_oldest_job(client_id: str) -> bool:
     async with get_session_factory()() as session:
         job = await session.scalar(
             select(CollectionJob)
-            .where(CollectionJob.status.in_(["pending", "dispatched"]))
+            .where(CollectionJob.status == "pending")
             .order_by(CollectionJob.created_at)
             .limit(1)
         )
         if job is None:
             return False
         dispatched_client_id = await bridge_manager.dispatch_job(job, client_id=client_id)
-        if dispatched_client_id:
-            await mark_job_dispatched(session, job, dispatched_client_id)
         return bool(dispatched_client_id)
 
 
@@ -216,8 +233,18 @@ async def _handle_message(
 ) -> None:
     message_type = str(payload.get("type") or "")
     await _touch_client(client_id)
-    if message_type == "auth_state":
+    if message_type == "hot_result":
+        from backend.app.services.hot_questions import receive_hot_result
+        receive_hot_result(client_id, str(payload["nonce"]), payload)
+    elif message_type == "auth_state":
         await _touch_client(client_id, auth=str(payload.get("zhihu_auth") or "unknown"))
+    elif message_type == "answer_batch":
+        from backend.app.services.capture_batches import save_capture_batch
+        result = await save_capture_batch(get_session_factory(), websocket.app.state.broker, client_id=client_id, payload=payload)
+        await websocket.send_json({"type": "batch_ack", "protocol_version": PROTOCOL_VERSION,
+            "job_id": payload.get("job_id"), "nonce": payload.get("nonce"), "batch_id": payload.get("batch_id"), "result": result})
+        if result.get("completed"):
+            await _dispatch_oldest_job(client_id)
     elif message_type == "progress":
         await websocket.send_json(
             {
@@ -258,6 +285,7 @@ async def _handle_message(
             nonce=str(payload["nonce"]),
             reason=reason,
             message=str(payload.get("message") or "知乎要求用户处理")[:2000],
+            capture=payload.get("capture") if isinstance(payload.get("capture"), dict) else None,
         )
         await _touch_client(client_id, auth=reason)
     elif message_type == "failed":
@@ -268,6 +296,7 @@ async def _handle_message(
             job_id=_required_job_id(payload),
             nonce=str(payload["nonce"]),
             message=str(payload.get("message") or "扩展采集失败")[:2000],
+            capture=payload.get("capture") if isinstance(payload.get("capture"), dict) else None,
         )
         await _touch_client(client_id, error=str(payload.get("message") or "扩展采集失败"))
     else:

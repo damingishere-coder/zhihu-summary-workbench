@@ -317,6 +317,11 @@ export const api = {
     }),
   publishRecords: () => request<PublishRecord[]>("/publish-records"),
   todayPlan: () => request<DailyPlan>("/plans/today"),
+  pauseTodayPlan: () => request<{ message: string }>("/plans/today/pause", { method: "POST" }),
+  continueTask: (id: string) => request<Task>(`/tasks/${id}/continue`, { method: "POST" }),
+  continuePartialTask: (id: string) => request<Task>(`/tasks/${id}/continue?allow_partial=true`, { method: "POST" }),
+  publishPackageUrl: (id: string) => `/api/drafts/${id}/publish-package`,
+  fetchHotQuestions: () => request<{ created: number; updated: number; warnings: string[] }>("/questions/hot/fetch", { method: "POST", body: JSON.stringify({ limit: 30 }) }),
   updateTodayPlan: (payload: Partial<DailyPlan>) =>
     request<DailyPlan>("/plans/today", {
       method: "PATCH",

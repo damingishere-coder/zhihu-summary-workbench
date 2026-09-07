@@ -41,6 +41,22 @@ const processingStates = [
   "reviewing_article",
 ];
 
+function captureMethodLabel(value: string | null | undefined) {
+  return {
+    rendered_dom: "当前页面 DOM",
+    same_origin_api: "显式同源 API",
+    json_import: "人工 JSON 导入",
+  }[value ?? ""] ?? value ?? "等待采集";
+}
+
+function recoveryActionLabel(value: string | undefined) {
+  return {
+    login: "在当前标签页登录后重试",
+    complete_verification: "完成人工验证后重试",
+    retry_visible_page_or_import_json: "重新打开正常问题页采集，仍失败时导入 JSON",
+  }[value ?? ""] ?? "";
+}
+
 export function QuestionDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
@@ -96,6 +112,7 @@ export function QuestionDetailPage() {
     },
     onError: (error) => message.error(error.message),
   });
+  const continueMutation = useMutation({ mutationFn: (id: string) => api.continueTask(id), onSuccess: refresh, onError: error => message.error(error.message) });
   const answerToggle = useMutation({
     mutationFn: ({ answerId, included }: { answerId: string; included: boolean }) =>
       included ? api.includeAnswer(answerId) : api.excludeAnswer(answerId),
@@ -161,6 +178,8 @@ export function QuestionDetailPage() {
               >
                 开始完整分析
               </Button>
+            ) : ["paused", "image_result_unknown"].includes(task.status) ? (
+              <Button type="primary" loading={continueMutation.isPending} onClick={() => continueMutation.mutate(task.id)}>继续任务</Button>
             ) : ["failed", "cancelled"].includes(task.status) ? (
               <Button
                 type="primary"
@@ -272,6 +291,15 @@ export function QuestionDetailPage() {
       {task?.result.warnings?.map((warning) => (
         <Alert key={warning} className="phase-alert" type="warning" showIcon title={warning} />
       ))}
+      {task?.result.capture?.diagnostics?.filter((item) => item.level !== "info").map((item) => (
+        <Alert
+          key={`${item.code}-${item.message}`}
+          className="phase-alert"
+          type={item.level === "error" ? "error" : "warning"}
+          showIcon
+          title={item.message}
+        />
+      ))}
 
       <div className="question-analysis-grid">
         <section className="work-surface question-analysis-column">
@@ -336,7 +364,24 @@ export function QuestionDetailPage() {
                 <Descriptions.Item label="当前阶段"><StatusTag status={task.stage} /></Descriptions.Item>
                 <Descriptions.Item label="Worker">{task.worker_id || "等待分配"}</Descriptions.Item>
                 <Descriptions.Item label="重试次数">{task.retry_count} / {task.max_retries}</Descriptions.Item>
-                <Descriptions.Item label="采集方式">{task.result.collector_mode || "等待采集"}</Descriptions.Item>
+                <Descriptions.Item label="采集方式">
+                  {task.result.capture?.method
+                    ? captureMethodLabel(task.result.capture.method)
+                    : task.result.collector_mode || "等待采集"}
+                </Descriptions.Item>
+                <Descriptions.Item label="回答数量">
+                  {task.result.capture?.collected_answer_count ?? "—"} / 可见 {task.result.capture?.visible_answer_count ?? "—"}
+                </Descriptions.Item>
+                {task.result.capture?.page_url && (
+                  <Descriptions.Item label="采集页面">
+                    <a href={task.result.capture.page_url} target="_blank" rel="noreferrer">打开知乎问题页</a>
+                  </Descriptions.Item>
+                )}
+                {task.result.capture?.recommended_action && (
+                  <Descriptions.Item label="建议恢复">
+                    {recoveryActionLabel(task.result.capture.recommended_action)}
+                  </Descriptions.Item>
+                )}
                 <Descriptions.Item label="模型调用">{analysis?.model_usage.calls ?? 0} 次</Descriptions.Item>
                 <Descriptions.Item label="Token">
                   {(analysis?.model_usage.input_tokens ?? 0).toLocaleString()} 输入 /

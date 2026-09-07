@@ -126,6 +126,7 @@ async def test_embedded_worker_uses_shared_broker_and_stops_on_memory_lifespan(
     monkeypatch.setattr(app_main, "create_queue_broker", lambda *_args: broker)
     monkeypatch.setattr(app_main, "get_session_factory", lambda: _session_factory)
     monkeypatch.setattr(app_main, "seed_defaults", fake_seed_defaults)
+    monkeypatch.setattr(app_main, "recover_interrupted_tasks", fake_seed_defaults)
     monkeypatch.setattr(app_main, "dispose_engines", fake_dispose_engines)
     monkeypatch.setattr(app_main, "run_worker_loop", fake_embedded_worker)
 
@@ -172,6 +173,7 @@ async def test_redis_lifespan_does_not_start_an_embedded_worker(
     monkeypatch.setattr(app_main, "create_queue_broker", lambda *_args: broker)
     monkeypatch.setattr(app_main, "get_session_factory", lambda: _session_factory)
     monkeypatch.setattr(app_main, "seed_defaults", fake_seed_defaults)
+    monkeypatch.setattr(app_main, "recover_interrupted_tasks", fake_seed_defaults)
     monkeypatch.setattr(app_main, "dispose_engines", fake_dispose_engines)
     monkeypatch.setattr(app_main, "run_worker_loop", fake_embedded_worker)
 

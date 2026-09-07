@@ -121,11 +121,11 @@ export function SettingsPage({
               <Form.Item name="manual_question_quota" label="手动问题配额" rules={[{ required: true }]}>
                 <InputNumber min={0} max={100} suffix="个" />
               </Form.Item>
-              <Form.Item name="max_answers_per_question" label="单题最大回答数" rules={[{ required: true }]}>
+              <Form.Item name="max_answers_per_question" label="手动采样回答上限（今日计划按 30 分钟采集）" rules={[{ required: true }]}>
                 <InputNumber min={1} max={500} suffix="条" />
               </Form.Item>
-              <Form.Item name="daily_plan_time" label="每日执行时间" rules={[{ required: true }]}>
-                <Input placeholder="09:00" />
+              <Form.Item name="daily_plan_time" label="历史计划时间（手动模式不生效）" rules={[{ required: true }]}>
+                <Input disabled />
               </Form.Item>
               <Form.Item name="daily_publish_limit" label="每日发布上限" rules={[{ required: true }]}>
                 <InputNumber min={1} max={100} suffix="篇" />
@@ -138,7 +138,7 @@ export function SettingsPage({
               type="info"
               showIcon
               title="自动开关保持关闭"
-              description={`自动生产：${query.data.auto_production_enabled ? "已开启" : "关闭"}；自动发布：${query.data.auto_publish_enabled ? "已开启" : "关闭"}。如需开启，应先完成浏览器安全测试和发布回归。`}
+              description="RunDock 托管、手动启动。进入工作台后点击执行计划才开始生产；重启后手动继续。最终在知乎人工发布。"
             />
           </section>
           <section className="settings-section">
@@ -158,11 +158,11 @@ export function SettingsPage({
           <section className="settings-section">
             <div className="settings-section__heading">
               <PictureOutlined />
-              <div><h2>手动图片 Prompt 工作流</h2><p>本项目不会接入或保存 OpenAI 图片 API Key。</p></div>
+              <div><h2>Codex 图片工作流</h2><p>使用已登录的 Codex CLI 内置生图，再由工作台排版中文。</p></div>
             </div>
             <div className="settings-fields">
               <Form.Item label="图片生成模式">
-                <Input value="复制 Prompt 到 ChatGPT 并手动上传" disabled />
+                <Input value="今日计划自动生成背景与 PNG；支持手动替换背景" disabled />
               </Form.Item>
               <Form.Item label="手动上传">
                 <Input value={query.data.allow_manual_image_upload ? "允许" : "关闭"} disabled />

@@ -40,6 +40,22 @@ export interface ClaimAnalysis {
   relevance_score: number;
 }
 
+export interface CaptureDiagnostic {
+  code: string;
+  level: "info" | "warning" | "error";
+  message: string;
+}
+
+export interface CaptureSummary {
+  version?: number | null;
+  method?: string | null;
+  page_url?: string | null;
+  visible_answer_count?: number | null;
+  collected_answer_count?: number | null;
+  diagnostics?: CaptureDiagnostic[];
+  recommended_action?: string;
+}
+
 export interface Task {
   id: string;
   question_id: string;
@@ -62,6 +78,7 @@ export interface Task {
     embeddings?: Record<string, number>;
     clusters?: Record<string, number>;
     collector_mode?: string;
+    capture?: CaptureSummary;
     warnings?: string[];
     article_characters?: number;
     review?: ArticleQualityReview;
@@ -373,6 +390,8 @@ export interface UsageBreakdown {
 }
 
 export interface ModelUsageOverview {
+  cost_known?: boolean;
+  usage_known?: boolean;
   date: string;
   calls: number;
   input_tokens: number;
@@ -450,6 +469,13 @@ export interface BrowserBridgeStatus {
   last_seen_at: string | null;
   last_check_at: string | null;
   active_job_id: string | null;
+  latest_capture: (CaptureSummary & {
+    job_id: string;
+    status: string;
+    source: string;
+    capture_version?: number | null;
+    capture_method?: string | null;
+  }) | null;
   message: string;
 }
 

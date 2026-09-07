@@ -89,6 +89,8 @@ async def publish_readiness(
         blockers.append("文章当前版本不存在")
     if not rendered:
         blockers.append("信息图尚未成功渲染")
+    if image and image.copy_state.get("article_version") is not None and image.copy_state["article_version"] != draft.current_version:
+        blockers.append("文章已修改，信息图对应旧文章，请重新生成图文并审核")
     risk_level = score.risk_level if score else "unknown"
     if risk_level in {"high", "blocked"}:
         blockers.append("内容风险等级较高，需要先处理风险项")

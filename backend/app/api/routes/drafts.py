@@ -76,6 +76,20 @@ async def serialize_draft(
                     "cluster_name": cluster.name if cluster else None,
                 }
             )
+    if version and version.source_snapshot.get("paragraphs"):
+        snapshot = version.source_snapshot
+        sources = snapshot.get("answers", {})
+        clusters = {row["id"]: row for row in snapshot.get("clusters", [])}
+        source_payload = []
+        for paragraph in snapshot["paragraphs"]:
+            for answer_id in paragraph.get("source_answer_ids", []):
+                answer = sources.get(answer_id, {})
+                source_payload.append({"paragraph_id": paragraph["paragraph_id"], "answer_id": answer_id,
+                    "answer_author": answer.get("author"), "answer_url": answer.get("url"),
+                    "answer_excerpt": str(answer.get("content", ""))[:220], "source_hash": answer.get("hash")})
+            for cluster_id in paragraph.get("cluster_ids", []):
+                source_payload.append({"paragraph_id": paragraph["paragraph_id"], "cluster_id": cluster_id,
+                    "cluster_name": clusters.get(cluster_id, {}).get("name")})
     return draft_to_read(draft, paragraph_sources=source_payload)
 
 
@@ -120,6 +134,7 @@ async def update_draft(
     draft = await load_draft(session, draft_id)
     if not draft:
         raise HTTPException(status_code=404, detail="草稿不存在")
+    previous_version = await session.scalar(select(ArticleVersion).where(ArticleVersion.draft_id == draft.id, ArticleVersion.version == draft.current_version))
     values = payload.model_dump(exclude_none=True)
     for key, value in values.items():
         setattr(draft, key, value)
@@ -135,6 +150,7 @@ async def update_draft(
             title=draft.title,
             content=draft.content,
             source_task_id=None,
+            source_snapshot={**(previous_version.source_snapshot if previous_version else {}), "edited": True},
         )
     )
     await session.commit()

@@ -29,7 +29,10 @@ function Stop-ProcessTree {
     Stop-Process -Id $RootProcessId -Force -ErrorAction SilentlyContinue
 }
 
-foreach ($RequiredPort in @(8000, 4173)) {
+$ExpectedRevision = (& $Python -c "from alembic.config import Config; from alembic.script import ScriptDirectory; print(ScriptDirectory.from_config(Config(r'$RepoRoot/alembic.ini')).get_current_head())").Trim()
+if ($LASTEXITCODE -ne 0) { throw "无法确定数据库目标版本" }
+
+foreach ($RequiredPort in @(8002, 4173)) {
     $ExistingListener = Get-NetTCPConnection -State Listen -LocalPort $RequiredPort -ErrorAction SilentlyContinue | Select-Object -First 1
     if ($ExistingListener) {
         $Owner = Get-CimInstance Win32_Process -Filter "ProcessId=$($ExistingListener.OwningProcess)" -ErrorAction SilentlyContinue
@@ -45,14 +48,9 @@ try {
     Set-Location -LiteralPath $RepoRoot
     $env:QUEUE_BACKEND = "memory"
 
-    & $Python -m alembic upgrade head
-    if ($LASTEXITCODE -ne 0) {
-        throw "数据库迁移失败，请检查 Alembic 输出。"
-    }
-
     $Backend = Start-Process `
         -FilePath $Python `
-        -ArgumentList @("-m", "uvicorn", "backend.app.main:app", "--app-dir", $RepoRoot, "--host", "127.0.0.1", "--port", "8000", "--no-access-log") `
+        -ArgumentList @("-m", "backend.app.runtime", "--app-dir", $RepoRoot, "--port", "8002") `
         -WorkingDirectory $RepoRoot `
         -WindowStyle Hidden `
         -RedirectStandardOutput (Join-Path $LogsRoot "local-backend.log") `
@@ -73,11 +71,11 @@ try {
     $BackendReady = $false
     for ($Attempt = 1; $Attempt -le 30; $Attempt++) {
         try {
-            $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/health" -TimeoutSec 2
+            $Health = Invoke-RestMethod -Uri "http://127.0.0.1:8002/api/health" -TimeoutSec 2
             if ($Health.app_id -ne "zhihu-summary-workbench") {
-                throw "8000 端口返回了其他应用：$($Health.app_id)"
+                throw "8002 端口返回了其他应用：$($Health.app_id)"
             }
-            if ($Health.database_revision -ne "20260823_0005") {
+            if ($Health.database_revision -ne $ExpectedRevision) {
                 throw "数据库版本不正确：$($Health.database_revision)"
             }
             $BackendReady = $true
@@ -114,8 +112,8 @@ try {
                 name = "backend"
                 pid = $Backend.Id
                 root = $RepoRoot
-                port = 8000
-                marker = "backend.app.main:app"
+                port = 8002
+                marker = "backend.app.runtime"
                 startTimeUtc = $Backend.StartTime.ToUniversalTime().ToString("o")
             }
             [ordered]@{
@@ -132,7 +130,7 @@ try {
 
     Write-Output "本机 memory 模式已启动（未启动 Docker 和独立 Worker）"
     Write-Output "前端: http://127.0.0.1:4173"
-    Write-Output "API 文档: http://127.0.0.1:8000/docs"
+    Write-Output "API 文档: http://127.0.0.1:8002/docs"
     Write-Output "运行状态: $StatePath"
 }
 catch {

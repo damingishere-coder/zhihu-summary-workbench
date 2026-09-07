@@ -189,6 +189,16 @@ async def import_answers(
         mode=payload.mode,
         max_answers=len(payload.answers),
         source="import",
+        capture_version=1,
+        capture_method="json_import",
+        collected_answer_count=len(payload.answers),
+        capture_diagnostics_json=[
+            {
+                "code": "manual_json_import",
+                "level": "warning",
+                "message": "人工 JSON 导入不代表实时自动采集成功",
+            }
+        ],
         request_json={"question_external_id": question.external_id, "mode": payload.mode},
         result_json=payload.model_dump(mode="json"),
         completed_at=payload.collected_at,

@@ -83,7 +83,7 @@ async def health(
         else None
     )
     connected = bool(client and client.id in bridge_manager.connected_client_ids)
-    auth = client.zhihu_auth if client else "unknown"
+    auth = client.zhihu_auth if connected else "unknown"
     capability = (
         "ready"
         if connected and auth == "authenticated"

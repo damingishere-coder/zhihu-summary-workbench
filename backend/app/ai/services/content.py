@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from backend.app.ai.services.answer_chunks import analyze_chunks
 from typing import Any
 
 from backend.app.ai.providers.base import StructuredOutputProvider, StructuredProviderResult
@@ -34,7 +35,7 @@ write_policy=force 的观点必须写入，write_policy=exclude 的观点不得�
 
 ARTICLE_SYSTEM_PROMPT = """你是知乎总结文章编辑。只基于观点地图和来源写作，不捏造数据，
 不虚构亲身经历，不按答主逐条复述，不复制独特句式。必须直接回答、说明共识与分歧及其前提，
-并返回每个段落对应的 cluster_ids 和 source_answer_ids。write_policy=force 的观点必须写入，
+并返回每个段落对应的 cluster_ids 和 source_answer_ids，正文段落 kind=content，AI 整理说明 kind=disclosure。write_policy=force 的观点必须写入，
 write_policy=exclude 的观点不得写入。文章末尾说明由 AI 辅助整理且需人工审核。"""
 
 REVIEW_SYSTEM_PROMPT = """你是独立文章质量审核器，不参与文章生成。检查共识、分歧、重要观点、
@@ -60,7 +61,17 @@ class AnswerQualityService:
         self.provider = provider
         self.system_prompt = system_prompt
 
-    async def evaluate_batch(
+    async def evaluate_batch(self, *, question_title: str, answers: list[dict[str, Any]]):
+        if any(len(str(row.get("plain_content", ""))) > 6000 for row in answers):
+            return await analyze_chunks(answers, lambda rows: self._raw_batch(question_title=question_title, answers=rows), quality=True)
+        result = await self._raw_batch(question_title=question_title, answers=answers)
+        expected = {row["answer_id"] for row in answers}
+        actual = [row.answer_id for row in result.data.items]
+        if set(actual) != expected or len(actual) != len(expected):
+            raise ValueError("回答分析结果缺失、重复或引用了未知来源")
+        return result
+
+    async def _raw_batch(
         self, *, question_title: str, answers: list[dict[str, Any]]
     ) -> StructuredProviderResult[AnswerQualityBatch]:
         return await self.provider.generate_structured(
@@ -84,7 +95,21 @@ class AnswerClaimBatchService:
         self.provider = provider
         self.system_prompt = system_prompt
 
-    async def extract_batch(
+    async def extract_batch(self, *, question_title: str, answers: list[dict[str, Any]]):
+        if any(len(str(row.get("plain_content", ""))) > 6000 for row in answers):
+            return await analyze_chunks(answers, lambda rows: self._raw_batch(question_title=question_title, answers=rows), quality=False)
+        result = await self._raw_batch(question_title=question_title, answers=answers)
+        expected = {row["answer_id"] for row in answers}
+        actual = [row.answer_id for row in result.data.items]
+        if set(actual) != expected or len(actual) != len(expected):
+            raise ValueError("回答分析结果缺失、重复或引用了未知来源")
+        lengths = {row["answer_id"]: len(str(row.get("plain_content", ""))) for row in answers}
+        for item in result.data.items:
+            item.source_start = 0
+            item.source_end = lengths[item.answer_id]
+        return result
+
+    async def _raw_batch(
         self, *, question_title: str, answers: list[dict[str, Any]]
     ) -> StructuredProviderResult[AnswerClaimBatch]:
         return await self.provider.generate_structured(

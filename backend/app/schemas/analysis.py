@@ -21,6 +21,8 @@ class AnswerQualityBatch(BaseModel):
 
 class AnswerClaimItem(BaseModel):
     answer_id: str
+    source_start: int = Field(default=0, ge=0)
+    source_end: int = Field(default=0, ge=0)
     summary: str = Field(min_length=1, max_length=1200)
     core_claims: list[str] = Field(default_factory=list, max_length=12)
     supporting_reasons: list[str] = Field(default_factory=list, max_length=12)
@@ -39,8 +41,14 @@ class AnswerClaimBatch(BaseModel):
     items: list[AnswerClaimItem] = Field(default_factory=list)
 
 
+class ClusterSourceRelation(BaseModel):
+    source_cluster_index: int = Field(ge=0)
+    relation: Literal["supports", "opposes", "conditional", "related"]
+
+
 class ClusterRefinementItem(BaseModel):
     source_cluster_indexes: list[int] = Field(min_length=1)
+    source_relations: list[ClusterSourceRelation] = Field(default_factory=list)
     name: str = Field(min_length=1, max_length=300)
     summary: str = Field(min_length=1, max_length=2000)
     cluster_type: Literal["consensus", "disagreement", "minority", "condition"]
@@ -75,6 +83,7 @@ class OpinionMapData(BaseModel):
 
 class ArticleParagraph(BaseModel):
     paragraph_id: str = Field(min_length=1, max_length=64)
+    kind: Literal["content", "disclosure"] = "content"
     content: str = Field(min_length=1)
     cluster_ids: list[str] = Field(default_factory=list)
     source_answer_ids: list[str] = Field(default_factory=list)

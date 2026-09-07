@@ -14,6 +14,15 @@ const statusMap: Record<
   { label: string; color: string; icon: ReactNode }
 > = {
   candidate: { label: "待处理", color: "default", icon: <ClockCircleFilled /> },
+  pending: { label: "等待手动执行", color: "default", icon: <ClockCircleFilled /> },
+  disabled: { label: "等待手动执行", color: "default", icon: <ClockCircleFilled /> },
+  paused: { label: "已暂停", color: "warning", icon: <PauseCircleFilled /> },
+  image_result_unknown: { label: "生图结果待核对", color: "warning", icon: <PauseCircleFilled /> },
+  generating_image: { label: "Codex 生图", color: "processing", icon: <SyncOutlined spin /> },
+  rendering_image: { label: "排版渲染", color: "processing", icon: <SyncOutlined spin /> },
+  running: { label: "执行中", color: "processing", icon: <SyncOutlined spin /> },
+  completed: { label: "已完成", color: "success", icon: <CheckCircleFilled /> },
+  insufficient_candidates: { label: "候选题不足", color: "warning", icon: <PauseCircleFilled /> },
   queued: { label: "队列中", color: "processing", icon: <ClockCircleFilled /> },
   preparing_input: { label: "准备输入", color: "processing", icon: <SyncOutlined spin /> },
   fetching_question: { label: "读取问题", color: "processing", icon: <SyncOutlined spin /> },

@@ -74,7 +74,6 @@ async def test_browser_session_status_start_and_qr(app_client, tmp_path) -> None
 @pytest.mark.parametrize(
     ("path", "payload"),
     [
-        ("/api/questions/hot/fetch", {"limit": 20, "collector_mode": "auto"}),
         (
             "/api/questions/does-not-matter/fetch-answers",
             {"mode": "representative", "max_answers": 20, "collector_mode": "auto"},

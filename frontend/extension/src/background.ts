@@ -1,3 +1,5 @@
+import { collectHotInPage } from "./hot-collector";
+import { inspectZhihuAuth } from "./auth";
 import { collectInPage, type CollectRequest } from "./collector";
 import { PROTOCOL_VERSION, randomNonce, websocketUrl, type BridgeState } from "./protocol";
 
@@ -5,6 +7,19 @@ type StoredConfig = { workbenchUrl?: string; token?: string; pairingCode?: strin
 let socket: WebSocket | null = null;
 let reconnectAttempt = 0;
 let heartbeat: number | null = null;
+let operationChain: Promise<void> = Promise.resolve();
+const activeJobs = new Set<string>();
+const acknowledgements = new Map<string, (value: Record<string, unknown>) => void>();
+
+async function acknowledgedSend(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const batchId = String(payload.batch_id);
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { acknowledgements.delete(batchId); reject(new Error("批次确认超时；已保存批次将在继续时去重")); }, 30_000);
+    acknowledgements.set(batchId, (value) => { clearTimeout(timer); acknowledgements.delete(batchId); resolve(value); });
+    try { send(payload); } catch (error) { clearTimeout(timer); acknowledgements.delete(batchId); reject(error); }
+  });
+}
+
 
 async function stored(): Promise<StoredConfig> {
   return chrome.storage.local.get(["workbenchUrl", "token", "pairingCode", "lastBundle"]);
@@ -25,15 +40,24 @@ async function connect() {
   if (!config.token && !config.pairingCode) return;
   if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) return;
   try {
-    socket = new WebSocket(websocketUrl(config.workbenchUrl || "http://127.0.0.1:8000"));
+    socket = new WebSocket(websocketUrl(config.workbenchUrl || "http://127.0.0.1:8002"));
     socket.onopen = () => {
       reconnectAttempt = 0;
       send({ type: "hello", job_id: null, nonce: randomNonce(), extension_version: chrome.runtime.getManifest().version, token: config.token, pairing_code: config.pairingCode });
-      void updateState({ connected: true, message: "扩展桥接已连接" });
+      void updateState({ connected: false, message: "正在等待工作台确认连接" });
       if (heartbeat !== null) clearInterval(heartbeat);
       heartbeat = setInterval(() => void checkAuth(), 20_000) as unknown as number;
     };
-    socket.onmessage = (event) => void handleServerMessage(JSON.parse(String(event.data)) as Record<string, unknown>);
+    socket.onmessage = (event) => {
+      try {
+        void handleServerMessage(JSON.parse(String(event.data)) as Record<string, unknown>)
+          .catch((error) => void updateState({
+            message: error instanceof Error ? error.message : "处理桥接消息失败",
+          }));
+      } catch {
+        void updateState({ message: "工作台返回了无法识别的桥接消息" });
+      }
+    };
     socket.onclose = () => {
       socket = null;
       if (heartbeat !== null) clearInterval(heartbeat);
@@ -85,29 +109,93 @@ async function handleServerMessage(message: Record<string, unknown>) {
     await checkAuth();
     return;
   }
-  if (message.type === "hello_ack") { await checkAuth(); return; }
+  if (message.type === "hello_ack") { await updateState({ connected: true, message: "工作台已确认连接" }); await checkAuth(); return; }
+  if (message.type === "batch_ack") {
+    acknowledgements.get(String(message.batch_id))?.(message.result as Record<string, unknown>);
+    return;
+  }
+  if (message.type === "collect_hot") {
+    operationChain = operationChain.then(async () => {
+      try {
+        const tabs = await chrome.tabs.query({ url: "https://www.zhihu.com/hot*" });
+        const tab = tabs[0] || await chrome.tabs.create({ url: "https://www.zhihu.com/hot", active: true });
+        if (!tab.id) throw new Error("无法打开热榜");
+        await waitForTab(tab.id);
+        let result: ReturnType<typeof collectHotInPage> = { items: [], error: "热榜未加载" };
+        for (let attempt = 0; attempt < 10; attempt += 1) {
+          const [execution] = await chrome.scripting.executeScript({ target: { tabId: tab.id }, world: "MAIN", func: collectHotInPage, args: [Number(message.limit || 30)] });
+          result = execution.result || result;
+          if (result.items.length || result.error.includes("验证")) break;
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+        }
+        send({ type: "hot_result", nonce: message.nonce, job_id: message.job_id, ...result });
+      } catch (error) {
+        if (socket?.readyState === WebSocket.OPEN) send({ type: "hot_result", nonce: message.nonce, job_id: message.job_id, error: String(error), items: [] });
+      }
+    });
+    return;
+  }
   if (message.type !== "collect_question") return;
   const jobId = String(message.job_id ?? "");
+  if (activeJobs.has(jobId)) return;
+  activeJobs.add(jobId);
+  operationChain = operationChain.then(() => collectJob(message)).finally(() => activeJobs.delete(jobId));
+}
+
+async function collectJob(message: Record<string, unknown>) {
+  const jobId = String(message.job_id ?? "");
   const nonce = String(message.nonce ?? "");
+  const known = new Set((message.known_answer_ids as string[]) || []);
+  const initialElapsed = Number(message.elapsed_seconds || 0);
+  const started = Date.now();
+  let emptyRounds = 0;
+  const budget = Math.min(1800, Number(message.capture_budget_seconds || 1800));
   try {
-    send({ type: "progress", job_id: jobId, nonce, progress: 10, message: "正在正常知乎标签页采集" });
-    const result = await executeCollection({
-      question_external_id: String(message.question_external_id ?? ""),
-      mode: message.mode === "complete" ? "complete" : "representative",
-      max_answers: Number(message.max_answers ?? 20),
-    });
-    if (result.kind === "completed") {
-      await chrome.storage.local.set({ lastBundle: result.bundle });
-      await updateState({ lastBundleAvailable: true, zhihuAuth: "authenticated", message: "最近一次采集已完成" });
-      send({ type: "completed", job_id: jobId, nonce, bundle: result.bundle });
-    } else if (result.kind === "blocked") {
-      await updateState({ zhihuAuth: result.reason, message: result.message });
-      send({ type: "blocked", job_id: jobId, nonce, reason: result.reason, message: result.message });
-    } else {
-      send({ type: "failed", job_id: jobId, nonce, message: result.message });
+    while (true) {
+      if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("桥接已断开，采集暂停");
+      const elapsed = initialElapsed + (Date.now() - started) / 1000;
+      if (elapsed >= budget) {
+        await acknowledgedSend({ type: "answer_batch", job_id: jobId, nonce, batch_id: randomNonce(), finished: true, elapsed_seconds: Math.min(elapsed,1800), stop_reason: "time_budget" });
+        return;
+      }
+      const result = await executeCollection({
+        question_external_id: String(message.question_external_id || ""),
+        mode: message.mode === "complete" ? "complete" : "representative",
+        max_answers: message.chunked ? 20 : Number(message.max_answers || 100),
+        capture_strategy: message.capture_strategy === "same_origin_api" ? "same_origin_api" : "rendered_dom",
+        known_answer_ids: [...known], allow_empty: known.size > 0,
+        max_scroll_rounds: 12, scroll_delay_ms: 1200,
+      });
+      if (result.kind === "completed") {
+        if (!message.chunked) {
+          await chrome.storage.local.set({ lastBundle: result.bundle });
+          send({ type: "completed", job_id: jobId, nonce, bundle: result.bundle });
+          return;
+        }
+        const answers = result.bundle.answers as Array<{ id: string }>;
+        const capture = result.bundle.capture as { reached_end?: boolean };
+        emptyRounds = answers.length ? 0 : emptyRounds + 1;
+        const nowElapsed = Math.min(1800, initialElapsed + (Date.now() - started) / 1000);
+        const reason = capture.reached_end ? "page_end" : nowElapsed >= budget ? "time_budget" : emptyRounds >= 3 ? "no_progress" : "";
+        const ack = await acknowledgedSend({ type: "answer_batch", job_id: jobId, nonce, batch_id: randomNonce(),
+          bundle: answers.length ? result.bundle : null, finished: Boolean(reason), stop_reason: reason, elapsed_seconds: nowElapsed });
+        for (const answer of answers) known.add(answer.id);
+        await updateState({ message: `已保存 ${ack.saved || known.size} 条回答`, zhihuAuth: "authenticated" });
+        if (!ack.continue) return;
+      } else if (result.kind === "blocked") {
+        await updateState({ zhihuAuth: result.reason, message: result.message });
+        // Previously acknowledged batches remain in SQLite, ready for explicit continuation.
+        send({ type: "blocked", job_id: jobId, nonce, reason: result.reason, message: result.message, capture: result.capture });
+        return;
+      } else {
+        send({ type: "failed", job_id: jobId, nonce, message: result.message, capture: result.capture });
+        return;
+      }
     }
   } catch (error) {
-    send({ type: "failed", job_id: jobId, nonce, message: error instanceof Error ? error.message : "扩展采集失败" });
+    const detail = error instanceof Error ? error.message : "扩展采集中断";
+    if (socket?.readyState === WebSocket.OPEN) send({ type: "failed", job_id: jobId, nonce, message: detail });
+    await updateState({ message: detail });
   }
 }
 
@@ -118,15 +206,7 @@ async function checkAuth() {
     return;
   }
   const [execution] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id }, world: "MAIN", func: async () => {
-      try {
-        const response = await fetch("/api/v4/me", { credentials: "include" });
-        const text = await response.text();
-        if (response.status === 401 || response.url.includes("/signin")) return "login_required";
-        if (response.status === 403 || ["当前请求存在异常", "请完成安全验证"].some((value) => text.includes(value))) return "verification_required";
-        return response.ok ? "authenticated" : "unknown";
-      } catch { return "unknown"; }
-    },
+    target: { tabId: tab.id }, world: "MAIN", func: inspectZhihuAuth,
   });
   const auth = String(execution?.result ?? "unknown") as BridgeState["zhihuAuth"];
   await updateState({ zhihuAuth: auth, message: auth === "authenticated" ? "知乎实时登录状态正常" : "请在正常知乎标签页完成登录或验证" });
@@ -138,7 +218,7 @@ chrome.runtime.onStartup.addListener(() => void connect());
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === "bridge-reconnect") void connect(); });
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message?.type === "connect") void connect().then(() => respond({ ok: true }));
-  else if (message?.type === "check_auth") void checkAuth().then(() => respond({ ok: true }));
+  else if (message?.type === "check_auth") void checkAuth().then(() => respond({ ok: true })).catch((error) => respond({ ok: false, error: error instanceof Error ? error.message : "登录检查失败，请刷新知乎页面后重试" }));
   else if (message?.type === "status") void chrome.storage.local.get(["bridgeState", "lastBundle"]).then(respond);
   else return false;
   return true;

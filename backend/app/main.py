@@ -13,6 +13,7 @@ from backend.app.core.logging import configure_logging
 from backend.app.db.session import dispose_engines, get_session_factory
 from backend.app.services.queue import create_queue_broker
 from backend.app.services.seed import seed_defaults
+from backend.app.services.checkpoints import recover_interrupted_tasks
 from backend.app.services.browser_bridge import run_bridge_dispatch_loop
 from backend.app.worker.main import run_worker_loop
 
@@ -66,6 +67,7 @@ async def lifespan(app: FastAPI):
     try:
         async with get_session_factory()() as session:
             await seed_defaults(session)
+            await recover_interrupted_tasks(session)
         app.state.bridge_dispatch_task = asyncio.create_task(
             run_bridge_dispatch_loop(
                 stop_event=app.state.bridge_stop_event,

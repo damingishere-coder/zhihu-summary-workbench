@@ -75,28 +75,22 @@ async def run_worker_loop(
     try:
         while not stop_event.is_set():
             await broker.heartbeat(worker_id, state="idle")
-            async with session_factory() as session:
-                try:
-                    result = await run_due_daily_plan(
-                        session, broker, settings
-                    )
-                    if result:
-                        logger.info(result.message)
-                except Exception:
-                    logger.exception("检查每日定时计划失败，将在下一轮重试")
             task_id = await _dequeue_until_stopped(broker, stop_event)
             if not task_id:
                 continue
             await broker.heartbeat(
                 worker_id, state="busy", current_task_id=task_id
             )
-            await process_task(
-                task_id,
-                worker_id=worker_id,
-                settings=settings,
-                broker=broker,
-                session_factory=session_factory,
-            )
+            async def keep_alive():
+                while True:
+                    await broker.heartbeat(worker_id, state="busy", current_task_id=task_id)
+                    await asyncio.sleep(10)
+            heartbeat = asyncio.create_task(keep_alive())
+            try:
+                await process_task(task_id, worker_id=worker_id, settings=settings, broker=broker, session_factory=session_factory)
+            finally:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
     finally:
         if owns_broker:
             await broker.close()

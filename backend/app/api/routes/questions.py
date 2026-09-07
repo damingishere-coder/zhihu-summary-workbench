@@ -96,13 +96,10 @@ async def list_questions(
 async def fetch_hot_questions(
     payload: HotQuestionFetchRequest,
 ) -> HotQuestionFetchResponse:
-    raise HTTPException(
-        status_code=410,
-        detail=(
-            "旧的 Playwright 热榜同步已停用。扩展协议 v1 暂不采集热榜，"
-            "请先手动添加问题或批量导入问题列表。"
-        ),
-    )
+    from backend.app.services.hot_questions import sync_hot_questions
+    from backend.app.db.session import get_session_factory
+    async with get_session_factory()() as session:
+        return HotQuestionFetchResponse(**await sync_hot_questions(session, limit=payload.limit))
 
 
 @router.get("/{question_id}", response_model=QuestionDetail)

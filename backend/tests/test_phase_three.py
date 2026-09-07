@@ -145,7 +145,9 @@ async def test_infographic_editor_render_and_download(
     assert "先上传背景图" in missing_background.json()["detail"]
 
     rendered = await client.post(f"/api/images/{workspace['id']}/render")
-    assert rendered.status_code == 200, rendered.text
+    async with get_session_factory()() as session:
+        render_diagnostics = [row.overflow_json for row in (await session.scalars(select(ImageVersion))).all()]
+    assert rendered.status_code == 200, (rendered.text, render_diagnostics)
     current = rendered.json()["current"]
     assert current["render_status"] == "rendered"
     assert current["overflow"] == []

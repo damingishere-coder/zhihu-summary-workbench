@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import date, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -48,6 +48,21 @@ from backend.app.services.usage import model_usage_overview
 
 
 router = APIRouter(tags=["publishing"])
+
+
+@router.get("/drafts/{draft_id}/publish-package")
+async def download_publish_package(draft_id: str, session: AsyncSession = Depends(get_db_session)):
+    from backend.app.services.publish_package import build_publish_package
+    draft = await session.get(ArticleDraft, draft_id)
+    if not draft:
+        raise HTTPException(404, "草稿不存在")
+    try:
+        package = await build_publish_package(session, draft)
+    except (ValueError, FileNotFoundError) as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return Response(package, media_type="application/zip", headers={
+        "Content-Disposition": f'attachment; filename="zhihu-{draft.id}-v{draft.current_version}.zip"',
+        "Cache-Control": "no-store"})
 
 
 @router.get(
@@ -222,7 +237,11 @@ async def get_today_plan(
     session: AsyncSession = Depends(get_db_session),
     settings: Settings = Depends(get_settings),
 ) -> DailyPlan:
-    return await get_or_create_daily_plan(session, settings)
+    from backend.app.services.daily_plan import refresh_plan_summary
+    item = await get_or_create_daily_plan(session, settings)
+    await refresh_plan_summary(session, item)
+    await session.commit()
+    return item
 
 
 @router.patch("/plans/today", response_model=DailyPlanRead)
@@ -275,3 +294,15 @@ async def list_open_source_references(
             )
         ).all()
     )
+
+
+@router.post("/plans/today/pause")
+async def pause_today_plan(session: AsyncSession = Depends(get_db_session), settings: Settings = Depends(get_settings)):
+    from backend.app.services.checkpoints import pause_tasks
+    item = await get_or_create_daily_plan(session, settings)
+    count = await pause_tasks(session, item.result.get("queued_task_ids", []))
+    await session.refresh(item)
+    item.result = {**item.result, "pause_requested": True}
+    item.status = "paused"
+    await session.commit()
+    return {"paused": count, "message": "已请求暂停，当前模型调用结束后停止；已有结果保留"}

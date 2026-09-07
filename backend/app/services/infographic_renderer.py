@@ -158,7 +158,7 @@ def build_infographic_html(
 html, body {{ margin: 0; width: 100%; height: 100%; }}
 body {{
   color: #172033;
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: calc(26px * {font_scale});
   background: #f5f7fa;
 }}
@@ -197,10 +197,10 @@ body {{
 }}
 h1 {{
   margin: 18px 0 16px;
-  max-height: calc(164px * {font_scale});
+  max-height: calc(184px * {font_scale});
   overflow: hidden;
   font-size: calc(60px * {font_scale});
-  line-height: 1.32;
+  line-height: 1.5;
   letter-spacing: -.03em;
 }}
 .conclusion {{
@@ -303,6 +303,7 @@ li {{
   color: #667085;
   font-size: calc(19px * {font_scale});
 }}
+{'.safe-text {max-height:none!important;} .content > * {flex-shrink:0;}' if version.content_json.get('auto_fit') else ''}
 </style>
 </head>
 <body>
@@ -426,6 +427,15 @@ async def render_infographic(
                             clientWidth: item.clientWidth,
                           }))""",
                     )
+                    boundary_overflow = await page.eval_on_selector_all(
+                        ".safe-text, .footer",
+                        """elements => elements.filter(item => {
+                          const box = item.getBoundingClientRect();
+                          const canvas = document.querySelector('.canvas').getBoundingClientRect();
+                          return box.bottom > canvas.bottom - 12 || box.right > canvas.right || box.left < canvas.left;
+                        }).map(item => ({field: item.dataset.field || '画布边界', text: (item.textContent || '').slice(0,120)}))""",
+                    )
+                    overflow.extend(boundary_overflow)
                     if overflow:
                         version.overflow_json = overflow
                         version.render_status = "overflow"

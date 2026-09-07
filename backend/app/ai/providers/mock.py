@@ -326,6 +326,7 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
             paragraphs.append(
                 ArticleParagraph(
                     paragraph_id="p008",
+                    kind="disclosure",
                     content=notice,
                     cluster_ids=[],
                     source_answer_ids=[],

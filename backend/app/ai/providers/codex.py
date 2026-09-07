@@ -21,9 +21,11 @@ from backend.app.ai.providers.base import (
     TextGenerationProvider,
 )
 from backend.app.core.config import Settings
+from backend.app.ai.providers.process_cleanup import stop_owned_process
 
 
 T = TypeVar("T", bound=BaseModel)
+_TEXT_SLOTS = asyncio.Semaphore(2)
 
 
 class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
@@ -36,7 +38,7 @@ class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
         self.executable = self._resolve_executable(settings.codex_path)
         if not self.executable:
             raise ProviderConfigurationError("未找到 Codex CLI，请先安装并登录 Codex")
-        self._semaphore = asyncio.Semaphore(max(1, min(settings.max_ai_concurrency, 2)))
+        self._semaphore = _TEXT_SLOTS
 
     @staticmethod
     def status(settings: Settings) -> dict[str, str | bool]:
@@ -145,10 +147,11 @@ class CodexProvider(TextGenerationProvider, StructuredOutputProvider):
                         process.communicate(prompt.encode("utf-8")),
                         timeout=max(10, self.settings.codex_timeout_seconds),
                     )
-                except TimeoutError as exc:
+                except (TimeoutError, asyncio.CancelledError) as exc:
                     if "process" in locals() and process.returncode is None:
-                        process.kill()
-                        await process.wait()
+                        await stop_owned_process(process)
+                    if isinstance(exc, asyncio.CancelledError):
+                        raise
                     raise ProviderResponseError(
                         f"Codex CLI 执行超时（>{self.settings.codex_timeout_seconds} 秒）"
                     ) from exc

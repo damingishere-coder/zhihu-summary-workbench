@@ -227,6 +227,7 @@ class ArticleVersion(Base, UuidPrimaryKeyMixin):
     version: Mapped[int] = mapped_column(Integer, nullable=False)
     title: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, nullable=False)
+    source_snapshot: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     source_task_id: Mapped[str | None] = mapped_column(
         ForeignKey("task_jobs.id", ondelete="SET NULL")
     )

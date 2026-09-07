@@ -21,6 +21,10 @@ coverage/
 data/
 logs/
 artifacts/runtime/
+artifacts/pre-production-repair-*/
+artifacts/codex-image-smoke-*/
+artifacts/rundock-handoff-*/
+artifacts/production-verification-*/
 artifacts/ui/draft-review-1280.png
 artifacts/ui/phase2-reference-comparison.png
 

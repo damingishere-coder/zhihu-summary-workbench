@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import select, case
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.config import Settings
@@ -90,6 +90,8 @@ async def get_or_create_daily_plan(
 async def update_daily_plan(
     session: AsyncSession, item: DailyPlan, values: dict[str, object]
 ) -> DailyPlan:
+    if values.get("auto_production") or values.get("auto_publish"):
+        raise ValueError("当前采用手动执行计划、人工发布，不支持开启自动开关")
     target = {
         "question_limit": int(values.get("question_limit", item.question_limit)),
         "hot_quota": int(values.get("hot_quota", item.hot_quota)),
@@ -99,111 +101,100 @@ async def update_daily_plan(
         raise ValueError("热门配额与手动配额之和不能超过每日问题数")
     for key, value in values.items():
         setattr(item, key, value)
-    # 自动发布具有更高风险，服务端始终要求先开启自动生产。
-    if item.auto_publish and not item.auto_production:
-        raise ValueError("开启自动发布前必须先开启自动生产")
+    item.auto_production = False
+    item.auto_publish = False
     await session.commit()
     await session.refresh(item)
     return item
 
 
-async def execute_daily_plan(
-    session: AsyncSession,
-    broker: QueueBroker,
-    item: DailyPlan,
-    settings: Settings,
-    *,
-    trigger: str,
-) -> DailyPlanRunResult:
-    now = datetime.now(timezone.utc)
-    local_today = datetime.now().astimezone().date()
-    last_executed = item.last_executed_at
-    if last_executed and last_executed.tzinfo is None:
-        last_executed = last_executed.replace(tzinfo=timezone.utc)
-    if last_executed and last_executed.astimezone().date() == local_today:
-        return DailyPlanRunResult(
-            plan=item,
-            queued_task_ids=list(item.result.get("queued_task_ids", [])),
-            skipped_question_ids=[],
-            message="今日计划已经执行过，本次没有重复入队",
-        )
-    if not item.auto_production and trigger == "timer":
-        item.status = "disabled"
-        item.result = {"trigger": trigger, "reason": "auto_production_disabled"}
+_plan_lock = __import__("asyncio").Lock()
+
+
+async def execute_daily_plan(session, broker, item, settings, *, trigger):
+    from backend.app.models.core import TaskJob
+    from backend.app.services.checkpoints import resume_task
+    from backend.app.services.hot_questions import sync_hot_questions
+    if trigger != "manual":
+        return DailyPlanRunResult(plan=item, message="请在工作台手动执行今日计划")
+    async with _plan_lock:
+        await session.refresh(item)
+        item.result = {**item.result, "pause_requested": False}
         await session.commit()
-        return DailyPlanRunResult(
-            plan=item,
-            message="自动生产未开启，定时器已安全跳过",
-        )
-    questions = list(
-        (
-            await session.scalars(
-                select(Question)
-                .where(Question.status == "candidate")
-                .order_by(
-                    Question.priority.asc(),
-                    Question.hot_rank.asc().nulls_last(),
-                    Question.created_at.asc(),
-                )
-                .limit(item.question_limit * 3)
+        previous = list(item.result.get("queued_task_ids", []))
+        queued = []
+        skipped = []
+        if not previous:
+            hot_result = await sync_hot_questions(session, limit=30)
+            await session.refresh(item)
+            item.result = {**item.result, "hot_sync": hot_result}
+        if item.result.get("pause_requested"):
+            await session.commit()
+            return DailyPlanRunResult(plan=item, message="计划已暂停，未继续入队")
+        for task_id in previous:
+            task = await session.get(TaskJob, task_id)
+            if task and task.status in {"paused", "failed", "cancelled", "waiting_browser", "waiting_login", "waiting_verification"}:
+                try:
+                    await resume_task(session, broker, task)
+                    queued.append(task.id)
+                except ValueError:
+                    skipped.append(task.question_id)
+        questions = list((await session.scalars(
+            select(Question).where(Question.status == "candidate").order_by(
+                case((Question.priority == "high", 0), (Question.priority == "medium", 1), else_=2), Question.hot_rank.asc().nulls_last(), Question.created_at.asc()
             )
-        ).all()
-    )
-    hot = [question for question in questions if question.source == "hot"][
-        : item.hot_quota
-    ]
-    manual = [question for question in questions if question.source != "hot"][
-        : item.manual_quota
-    ]
-    selected = (hot + manual)[: item.question_limit]
-    queued: list[str] = []
-    skipped: list[str] = []
-    runtime = settings.model_copy(
-        update={
-            "max_answers_per_question": item.max_answers,
-            "max_ai_concurrency": item.max_concurrency,
-        }
-    )
-    for question in selected:
-        try:
-            task = await create_task(session, broker, question, runtime)
-            queued.append(task.id)
-        except (ValueError, RuntimeError):
-            skipped.append(question.id)
-    item.status = "executed"
-    item.last_executed_at = now
-    item.result = {
-        "trigger": trigger,
-        "queued_task_ids": queued,
-        "skipped_question_ids": skipped,
-        "selected_question_ids": [question.id for question in selected],
-        "auto_publish": item.auto_publish,
-    }
-    await session.commit()
-    await session.refresh(item)
-    return DailyPlanRunResult(
-        plan=item,
-        queued_task_ids=queued,
-        skipped_question_ids=skipped,
-        message=f"今日计划已执行，{len(queued)} 个问题进入队列",
-    )
+        )).all())
+        used = set()
+        if previous:
+            used = set((await session.scalars(select(TaskJob.question_id).where(TaskJob.id.in_(previous)))).all())
+        questions = [q for q in questions if q.id not in used]
+        remaining = max(0, item.question_limit - len(previous))
+        hot = [q for q in questions if q.source == "hot"][:item.hot_quota]
+        manual = [q for q in questions if q.source != "hot"][:item.manual_quota]
+        chosen = (hot + manual)[:remaining]
+        selected_ids = {q.id for q in chosen}
+        chosen += [q for q in questions if q.id not in selected_ids][:max(0, remaining - len(chosen))]
+        runtime = settings.model_copy(update={"max_answers_per_question": item.max_answers, "max_ai_concurrency": min(2, item.max_concurrency)})
+        for question in chosen:
+            await session.refresh(item)
+            if item.result.get("pause_requested"):
+                break
+            try:
+                task = await create_task(session, broker, question, runtime)
+                previous.append(task.id)
+                queued.append(task.id)
+                # Persist each allocation before continuing, even if a later question fails.
+                item.result = {**item.result, "queued_task_ids": previous}
+                await session.commit()
+            except (ValueError, RuntimeError):
+                skipped.append(question.id)
+        item.status = "paused" if item.result.get("pause_requested") else ("running" if previous else "insufficient_candidates")
+        item.auto_production = False
+        item.auto_publish = False
+        if queued:
+            item.last_executed_at = datetime.now(timezone.utc)
+        item.result = {**item.result, "trigger": "manual", "queued_task_ids": previous,
+                       "skipped_question_ids": skipped, "shortfall": max(0, item.question_limit - len(previous))}
+        await refresh_plan_summary(session, item)
+        await session.commit()
+        return DailyPlanRunResult(plan=item, queued_task_ids=queued, skipped_question_ids=skipped,
+                                  message=f"本次入队或继续 {len(queued)} 题；今日已安排 {len(previous)}/{item.question_limit} 题")
 
 
-async def run_due_daily_plan(
-    session: AsyncSession,
-    broker: QueueBroker,
-    settings: Settings,
-) -> DailyPlanRunResult | None:
-    item = await get_or_create_daily_plan(session, settings)
-    now = datetime.now().astimezone()
-    current_hm = now.strftime("%H:%M")
-    if current_hm < item.execute_time:
-        return None
-    last_executed = item.last_executed_at
-    if last_executed and last_executed.tzinfo is None:
-        last_executed = last_executed.replace(tzinfo=timezone.utc)
-    if last_executed and last_executed.astimezone().date() == now.date():
-        return None
-    return await execute_daily_plan(
-        session, broker, item, settings, trigger="timer"
-    )
+async def refresh_plan_summary(session, item):
+    from backend.app.models.core import TaskJob
+    tasks = list((await session.scalars(select(TaskJob).where(TaskJob.id.in_(item.result.get("queued_task_ids", []))))).all())
+    completed = sum(t.status in {"waiting_review", "review_approved"} and bool(t.result.get("images_complete")) for t in tasks)
+    item.result = {**item.result, "completed": completed,
+        "article_completed": sum(bool(t.result.get("checkpoints", {}).get("article") or t.result.get("draft_id")) for t in tasks),
+        "failed": sum(t.status in {"failed", "image_result_unknown"} for t in tasks),
+        "waiting": sum(t.status in {"paused", "waiting_browser", "waiting_login", "waiting_verification"} for t in tasks),
+        "items": [{"task_id": t.id, "question_id": t.question_id, "status": t.status, "stage": t.stage,
+                   "progress": t.progress, "error": t.error_message} for t in tasks]}
+    if completed >= item.question_limit:
+        item.status = "completed"
+
+
+async def run_due_daily_plan(session, broker, settings):
+    # Manual RunDock ownership: neither startup nor a timer starts model work.
+    return None
