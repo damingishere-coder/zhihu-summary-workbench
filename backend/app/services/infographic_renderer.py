@@ -197,10 +197,10 @@ body {{
 }}
 h1 {{
   margin: 18px 0 16px;
-  max-height: calc(164px * {font_scale});
+  max-height: calc(184px * {font_scale});
   overflow: hidden;
   font-size: calc(60px * {font_scale});
-  line-height: 1.32;
+  line-height: 1.5;
   letter-spacing: -.03em;
 }}
 .conclusion {{
