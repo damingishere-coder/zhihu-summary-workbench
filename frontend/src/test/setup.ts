@@ -1,5 +1,12 @@
 import "@testing-library/jest-dom/vitest";
 
+// jsdom has no layout engine; Ant Design observers are exercised in browser QA.
+globalThis.ResizeObserver = class ResizeObserver {
+  observe() {}
+  unobserve() {}
+  disconnect() {}
+};
+
 Object.defineProperty(window, "matchMedia", {
   writable: true,
   value: (query: string) => ({
@@ -13,4 +20,3 @@ Object.defineProperty(window, "matchMedia", {
     dispatchEvent: () => false,
   }),
 });
-

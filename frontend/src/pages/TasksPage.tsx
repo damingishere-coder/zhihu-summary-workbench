@@ -1,10 +1,4 @@
-import {
-  ApiOutlined,
-  CloseCircleOutlined,
-  EyeOutlined,
-  ReloadOutlined,
-  SearchOutlined,
-} from "@ant-design/icons";
+import { SearchOutlined, MoreOutlined } from "@ant-design/icons";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -12,17 +6,22 @@ import {
   Button,
   Descriptions,
   Drawer,
+  Dropdown,
   Input,
   Progress,
   Select,
   Space,
   Table,
   Timeline,
-  Tooltip,
 } from "antd";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
+import { allTasks } from "../api/collections";
+import { useListLocation } from "../hooks/useListLocation";
+import { UsageDetails } from "../components/UsageDetails";
+import { SectionNav } from "../components/SectionNav";
+import { taskAction } from "../utils/taskActions";
 import { PageHeader } from "../components/PageHeader";
 import { ProgressCell } from "../components/ProgressCell";
 import { EmptyState, ErrorState, LoadingBlock } from "../components/StateViews";
@@ -48,18 +47,18 @@ const cancellableStatuses = [
   "waiting_verification",
 ];
 
-const browserWaitingStatuses = ["waiting_browser", "waiting_login", "waiting_verification"];
-
 export function TasksPage() {
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const [status, setStatus] = useState("");
-  const [search, setSearch] = useState("");
+  const list = useListLocation();
+  const status = list.get("status");
+  const search = list.get("search");
+  const setStatus = (value: string) => list.set("status", value);
+  const setSearch = (value: string) => list.set("search", value);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const query = useQuery({
     queryKey: ["tasks", status],
-    queryFn: () => api.tasks({ status }),
+    queryFn: () => allTasks(status),
     refetchInterval: 8_000,
   });
   const detail = useQuery({
@@ -67,13 +66,16 @@ export function TasksPage() {
     queryFn: () => api.task(selectedId!),
     enabled: Boolean(selectedId),
     refetchInterval: (query) =>
-      cancellableStatuses.includes(query.state.data?.status ?? "") ? 2_000 : false,
+      cancellableStatuses.includes(query.state.data?.status ?? "")
+        ? 2_000
+        : false,
   });
   const filtered = useMemo(
     () =>
       (query.data?.items ?? []).filter(
         (task) =>
-          !search || task.question_title.toLowerCase().includes(search.toLowerCase()),
+          !search ||
+          task.question_title.toLowerCase().includes(search.toLowerCase()),
       ),
     [query.data?.items, search],
   );
@@ -90,7 +92,7 @@ export function TasksPage() {
     },
     onError: (error) => message.error(error.message),
   });
-  const resume = useMutation({ mutationFn: (task: Task) => task.error_message?.startsWith("资料不足") ? api.continuePartialTask(task.id) : api.continueTask(task.id), onSuccess: refresh, onError: error => message.error(error.message) });
+
   const cancel = useMutation({
     mutationFn: api.cancelTask,
     onSuccess: async () => {
@@ -104,9 +106,12 @@ export function TasksPage() {
     {
       title: "任务 / 问题",
       key: "task",
-      ellipsis: true,
+      ellipsis: false,
       render: (_: unknown, task: Task) => (
-        <button className="table-link table-title" onClick={() => setSelectedId(task.id)}>
+        <button
+          className="table-link table-title"
+          onClick={() => setSelectedId(task.id)}
+        >
           <span>{task.question_title}</span>
           <small>任务 {truncateId(task.id)} · 内容生产流水线</small>
         </button>
@@ -114,6 +119,7 @@ export function TasksPage() {
     },
     {
       title: "当前阶段",
+      responsive: ["xl" as const],
       dataIndex: "stage",
       key: "stage",
       width: 130,
@@ -121,6 +127,7 @@ export function TasksPage() {
     },
     {
       title: "进度",
+      responsive: ["lg" as const],
       dataIndex: "progress",
       key: "progress",
       width: 140,
@@ -131,29 +138,16 @@ export function TasksPage() {
       dataIndex: "started_at",
       key: "started_at",
       width: 150,
-      responsive: ["xl" as const],
+      responsive: ["xxl" as const],
       render: (value: string | null) => formatDateTime(value, true),
     },
     {
       title: "耗时",
       key: "duration",
       width: 100,
-      responsive: ["xl" as const],
-      render: (_: unknown, task: Task) => formatDuration(task.started_at, task.completed_at),
-    },
-    {
-      title: "Worker",
-      dataIndex: "worker_id",
-      key: "worker_id",
-      width: 130,
-      render: (value: string | null) => value ? truncateId(value) : "等待分配",
-    },
-    {
-      title: "重试",
-      dataIndex: "retry_count",
-      key: "retry_count",
-      width: 72,
-      render: (value: number, task: Task) => `${value}/${task.max_retries}`,
+      responsive: ["xxl" as const],
+      render: (_: unknown, task: Task) =>
+        formatDuration(task.started_at, task.completed_at),
     },
     {
       title: "状态",
@@ -168,49 +162,53 @@ export function TasksPage() {
       width: 220,
       fixed: "right" as const,
       render: (_: unknown, task: Task) => (
-        <Space size={2}>
-          {["paused", "image_result_unknown"].includes(task.status) && <Button size="small" loading={resume.isPending} onClick={() => resume.mutate(task)}>{task.error_message?.startsWith("资料不足") ? "按现有资料继续" : task.status === "image_result_unknown" ? "核对图片后继续" : "继续"}</Button>}
-          <Tooltip title="查看任务详情和完整日志">
-            <Button type="text" aria-label="查看任务详情" icon={<EyeOutlined />} onClick={() => setSelectedId(task.id)} />
-          </Tooltip>
-          <Tooltip title={["failed", "cancelled"].includes(task.status) ? "重新入队" : "当前状态不能重试"}>
+        <Space size={8} wrap>
+          <Link to={taskAction(task).href}>{taskAction(task).label}</Link>
+          <Button
+            type="text"
+            aria-label="查看任务详情"
+            onClick={() => setSelectedId(task.id)}
+          >
+            详情
+          </Button>
+          <Dropdown
+            trigger={["click"]}
+            menu={{
+              items: [
+                {
+                  key: "retry",
+                  label: "重新入队",
+                  disabled:
+                    !["failed", "cancelled"].includes(task.status) ||
+                    retry.isPending,
+                  onClick: () => retry.mutate(task.id),
+                },
+                {
+                  key: "cancel",
+                  label: "取消任务",
+                  danger: true,
+                  disabled:
+                    !cancellableStatuses.includes(task.status) ||
+                    cancel.isPending,
+                  onClick: () =>
+                    modal.confirm({
+                      title: "确认取消任务？",
+                      content: "当前步骤结束后停止，已保存的数据会保留。",
+                      okText: "确认取消",
+                      cancelText: "继续执行",
+                      okButtonProps: { danger: true },
+                      onOk: () => cancel.mutateAsync(task.id),
+                    }),
+                },
+              ],
+            }}
+          >
             <Button
               type="text"
-              aria-label="重试任务"
-              icon={<ReloadOutlined />}
-              disabled={!["failed", "cancelled"].includes(task.status)}
-              onClick={() => retry.mutate(task.id)}
+              icon={<MoreOutlined />}
+              aria-label="更多任务操作"
             />
-          </Tooltip>
-          {browserWaitingStatuses.includes(task.status) && (
-            <Tooltip title="用 Chrome 扩展继续">
-              <Button
-                type="text"
-                aria-label="用 Chrome 扩展继续"
-                icon={<ApiOutlined />}
-                onClick={() => navigate(`/settings/browser?taskId=${encodeURIComponent(task.id)}&returnTo=/tasks`)}
-              />
-            </Tooltip>
-          )}
-          <Tooltip title={cancellableStatuses.includes(task.status) ? "取消任务" : "当前状态不能取消"}>
-            <Button
-              type="text"
-              danger
-              aria-label="取消任务"
-              icon={<CloseCircleOutlined />}
-              disabled={!cancellableStatuses.includes(task.status)}
-              onClick={() =>
-                modal.confirm({
-                  title: "确认取消任务？",
-                  content: "运行中的模型调用会先结束，但结果不会写入草稿。",
-                  okText: "确认取消",
-                  okButtonProps: { danger: true },
-                  cancelText: "继续执行",
-                  onOk: () => cancel.mutateAsync(task.id),
-                })
-              }
-            />
-          </Tooltip>
+          </Dropdown>
         </Space>
       ),
     },
@@ -219,7 +217,11 @@ export function TasksPage() {
   const selected = detail.data;
   return (
     <div className="page">
-      <PageHeader title="任务中心" description="跟踪 Worker、任务阶段、实时进度、重试次数和失败原因。" />
+      <PageHeader
+        title="任务记录"
+        description="查看生成进度，处理暂停与异常。"
+      />
+      <SectionNav section="today" />
       <section className="work-surface">
         <div className="table-toolbar">
           <Select
@@ -250,20 +252,38 @@ export function TasksPage() {
           />
         </div>
         {query.isLoading && <LoadingBlock rows={10} />}
-        {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
+        {query.isError && (
+          <ErrorState
+            error={query.error}
+            onRetry={() => void query.refetch()}
+          />
+        )}
         {query.data && query.data.total === 0 && (
-          <EmptyState title="还没有任务" description="先到问题池添加问题并点击“加入任务”。" />
+          <EmptyState
+            title="还没有任务"
+            description="先到问题池添加问题并点击“加入任务”。"
+          />
         )}
         {query.data && query.data.total > 0 && (
           <Table<Task>
             rowKey="id"
             columns={columns}
             dataSource={filtered}
-            scroll={{ x: 1100 }}
-            pagination={{ pageSize: 12, showTotal: (total) => `共 ${total} 个任务` }}
+            className="comfortable-table"
+            pagination={{
+              current: Math.min(
+                list.page,
+                Math.max(1, Math.ceil(filtered.length / 12)),
+              ),
+              onChange: (page) => list.set("page", page),
+              showSizeChanger: false,
+              pageSize: 12,
+              showTotal: (total) => `共 ${total} 个任务`,
+            }}
           />
         )}
       </section>
+      <UsageDetails />
       <Drawer
         title="任务详情"
         open={Boolean(selectedId)}
@@ -271,7 +291,12 @@ export function TasksPage() {
         size={560}
       >
         {detail.isLoading && <LoadingBlock rows={10} />}
-        {detail.isError && <ErrorState error={detail.error} onRetry={() => void detail.refetch()} />}
+        {detail.isError && (
+          <ErrorState
+            error={detail.error}
+            onRetry={() => void detail.refetch()}
+          />
+        )}
         {selected && (
           <div className="task-drawer">
             <div className="task-drawer__title">
@@ -283,7 +308,13 @@ export function TasksPage() {
             </div>
             <Progress
               percent={selected.progress}
-              status={selected.status === "failed" ? "exception" : selected.progress === 100 ? "success" : "active"}
+              status={
+                selected.status === "failed"
+                  ? "exception"
+                  : selected.progress === 100
+                    ? "success"
+                    : "active"
+              }
             />
             {selected.error_message && (
               <Alert
@@ -295,17 +326,34 @@ export function TasksPage() {
               />
             )}
             <Descriptions column={2} size="small">
-              <Descriptions.Item label="当前阶段"><StatusTag status={selected.stage} /></Descriptions.Item>
-              <Descriptions.Item label="Worker">{selected.worker_id || "未分配"}</Descriptions.Item>
-              <Descriptions.Item label="开始时间">{formatDateTime(selected.started_at, true)}</Descriptions.Item>
-              <Descriptions.Item label="耗时">{formatDuration(selected.started_at, selected.completed_at)}</Descriptions.Item>
-              <Descriptions.Item label="重试次数">{selected.retry_count} / {selected.max_retries}</Descriptions.Item>
-              <Descriptions.Item label="Provider">{selected.result.provider || "等待调用"}</Descriptions.Item>
+              <Descriptions.Item label="当前阶段">
+                <StatusTag status={selected.stage} />
+              </Descriptions.Item>
+              <Descriptions.Item label="Worker">
+                {selected.worker_id || "未分配"}
+              </Descriptions.Item>
+              <Descriptions.Item label="开始时间">
+                {formatDateTime(selected.started_at, true)}
+              </Descriptions.Item>
+              <Descriptions.Item label="耗时">
+                {formatDuration(selected.started_at, selected.completed_at)}
+              </Descriptions.Item>
+              <Descriptions.Item label="重试次数">
+                {selected.retry_count} / {selected.max_retries}
+              </Descriptions.Item>
+              <Descriptions.Item label="Provider">
+                {selected.result.provider || "等待调用"}
+              </Descriptions.Item>
             </Descriptions>
             <h3>完整任务日志</h3>
             <Timeline
               items={selected.logs.map((log) => ({
-                color: log.level === "error" ? "red" : log.level === "warning" ? "orange" : "blue",
+                color:
+                  log.level === "error"
+                    ? "red"
+                    : log.level === "warning"
+                      ? "orange"
+                      : "blue",
                 content: (
                   <div className="task-log-item">
                     <time>{formatDateTime(log.created_at, true)}</time>

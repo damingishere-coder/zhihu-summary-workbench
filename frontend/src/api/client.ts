@@ -167,7 +167,8 @@ export const api = {
     }),
   workers: () => request<Worker[]>("/workers"),
 
-  drafts: () => request<Paginated<Draft>>("/drafts"),
+  drafts: (filters: Record<string, string | number | undefined> = {}) =>
+    request<Paginated<Draft>>(`/drafts${queryString(filters)}`),
   draft: (id: string) => request<Draft>(`/drafts/${id}`),
   updateDraft: (id: string, payload: Pick<Draft, "title" | "content">) =>
     request<Draft>(`/drafts/${id}`, {

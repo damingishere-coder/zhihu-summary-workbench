@@ -19,14 +19,13 @@ import {
   Tooltip,
 } from "antd";
 import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useListLocation } from "../hooks/useListLocation";
+import { useNavigate, useLocation } from "react-router-dom";
 import { api } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
-import { PriorityTag } from "../components/PriorityTag";
 import {
   AddQuestionButton,
   AddQuestionModal,
-  ImportQuestionsButton,
   ImportQuestionsModal,
 } from "../components/QuestionModals";
 import { EmptyState, ErrorState, LoadingBlock } from "../components/StateViews";
@@ -36,8 +35,8 @@ import { formatDateTime } from "../utils/format";
 
 const tabStatus: Record<string, string> = {
   全部问题: "",
-  今日任务: "queued",
-  已处理: "waiting_review",
+  排队中: "queued",
+  待检查: "waiting_review",
   已忽略: "ignored",
 };
 
@@ -46,17 +45,32 @@ export const PERMANENT_DELETE_WARNING =
 
 export function QuestionsPage() {
   const navigate = useNavigate();
+  const location = useLocation();
+  const detailUrl = (id: string) =>
+    `/questions/${id}?returnTo=${encodeURIComponent(location.pathname + location.search)}`;
   const { message, modal } = App.useApp();
   const queryClient = useQueryClient();
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
-  const [tab, setTab] = useState("全部问题");
-  const [source, setSource] = useState("");
-  const [priority, setPriority] = useState("");
-  const [search, setSearch] = useState("");
+  const list = useListLocation();
+  const tab = list.get("tab", "全部问题");
+  const source = list.get("source");
+  const priority = list.get("priority");
+  const search = list.get("search");
+  const setTab = (value: string) => list.set("tab", value);
+  const setSource = (value: string) => list.set("source", value);
+  const setPriority = (value: string) => list.set("priority", value);
+  const setSearch = (value: string) => list.set("search", value);
   const filters = useMemo(
-    () => ({ status: tabStatus[tab], source, priority, search }),
-    [priority, search, source, tab],
+    () => ({
+      status: tabStatus[tab],
+      source,
+      priority,
+      search,
+      offset: (list.page - 1) * 12,
+      limit: 12,
+    }),
+    [priority, search, source, tab, list.page],
   );
   const query = useQuery({
     queryKey: ["questions", filters],
@@ -69,7 +83,9 @@ export function QuestionsPage() {
       queryClient.invalidateQueries({ queryKey: ["drafts"] }),
       queryClient.invalidateQueries({ queryKey: ["publish-schedules"] }),
       queryClient.invalidateQueries({ queryKey: ["publish-records"] }),
-      queryClient.invalidateQueries({ queryKey: ["drafts", "publish-readiness"] }),
+      queryClient.invalidateQueries({
+        queryKey: ["drafts", "publish-readiness"],
+      }),
       queryClient.invalidateQueries({ queryKey: ["dashboard"] }),
     ]);
   };
@@ -81,10 +97,18 @@ export function QuestionsPage() {
     },
     onError: (error) => message.error(error.message),
   });
-  const hotMutation = useMutation({ mutationFn: api.fetchHotQuestions, onSuccess: async result => {
-    message.info(result.warnings?.length ? result.warnings.join("；") : `热榜已同步：新增 ${result.created}，更新 ${result.updated}`);
-    await refresh();
-  }, onError: error => message.error(error.message) });
+  const hotMutation = useMutation({
+    mutationFn: api.fetchHotQuestions,
+    onSuccess: async (result) => {
+      message.info(
+        result.warnings?.length
+          ? result.warnings.join("；")
+          : `热榜已同步：新增 ${result.created}，更新 ${result.updated}`,
+      );
+      await refresh();
+    },
+    onError: (error) => message.error(error.message),
+  });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Partial<Question> }) =>
       api.updateQuestion(id, payload),
@@ -112,9 +136,12 @@ export function QuestionsPage() {
       title: "问题标题",
       dataIndex: "title",
       key: "title",
-      ellipsis: true,
+      ellipsis: false,
       render: (value: string, question: Question) => (
-        <button className="table-link table-title" onClick={() => navigate(`/questions/${question.id}`)}>
+        <button
+          className="table-link table-title"
+          onClick={() => navigate(detailUrl(question.id))}
+        >
           <span>{value}</span>
           <small>{question.url}</small>
         </button>
@@ -122,13 +149,17 @@ export function QuestionsPage() {
     },
     {
       title: "来源",
+      responsive: ["xl" as const],
       dataIndex: "source",
       key: "source",
       width: 100,
-      render: (value: string) => ({ manual: "手动推荐", import: "批量导入", hot: "热门问题" })[value] || value,
+      render: (value: string) =>
+        ({ manual: "手动推荐", import: "批量导入", hot: "热门问题" })[value] ||
+        value,
     },
     {
       title: "优先级",
+      responsive: ["xl" as const],
       dataIndex: "priority",
       key: "priority",
       width: 92,
@@ -138,7 +169,12 @@ export function QuestionsPage() {
           variant="borderless"
           value={value}
           aria-label={`修改 ${record.title} 的优先级`}
-          onChange={(next) => updateMutation.mutate({ id: record.id, payload: { priority: next } })}
+          onChange={(next) =>
+            updateMutation.mutate({
+              id: record.id,
+              payload: { priority: next },
+            })
+          }
           options={[
             { value: "high", label: "高" },
             { value: "medium", label: "中" },
@@ -165,27 +201,42 @@ export function QuestionsPage() {
     {
       title: "操作",
       key: "actions",
-      width: 132,
+      width: 200,
       fixed: "right" as const,
       render: (_: unknown, question: Question) => (
         <Space size={2}>
-          <Tooltip title={question.status === "candidate" ? "加入任务" : "该问题已有任务记录"}>
+          <Tooltip
+            title={
+              question.status === "candidate"
+                ? "加入任务"
+                : "该问题已有任务记录"
+            }
+          >
             <Button
               type="text"
               icon={<PlayCircleOutlined />}
               aria-label="加入任务"
-              disabled={question.status !== "candidate"}
-              loading={queueMutation.isPending}
+              disabled={
+                question.status !== "candidate" || queueMutation.isPending
+              }
+              loading={
+                queueMutation.isPending &&
+                queueMutation.variables === question.id
+              }
               onClick={() => queueMutation.mutate(question.id)}
-            />
+            >
+              开始生成
+            </Button>
           </Tooltip>
           <Tooltip title="查看详情">
             <Button
               type="text"
               icon={<EyeOutlined />}
               aria-label="查看详情"
-              onClick={() => navigate(`/questions/${question.id}`)}
-            />
+              onClick={() => navigate(detailUrl(question.id))}
+            >
+              详情
+            </Button>
           </Tooltip>
           <Dropdown
             trigger={["click"]}
@@ -226,15 +277,33 @@ export function QuestionsPage() {
   return (
     <div className="page">
       <PageHeader
-        title="问题池"
-        description="管理热门问题、手动推荐和已进入处理流程的问题。"
+        title="选题"
+        description="从一个值得回答的问题开始。"
         actions={
           <Space wrap>
             <Tooltip title="通过已配对的 Chrome 扩展读取知乎热榜">
-              <Button loading={hotMutation.isPending} onClick={() => hotMutation.mutate()}>同步知乎热榜</Button>
+              <Button
+                loading={hotMutation.isPending}
+                onClick={() => hotMutation.mutate()}
+              >
+                同步知乎热榜
+              </Button>
             </Tooltip>
             <AddQuestionButton onClick={() => setAddOpen(true)} />
-            <ImportQuestionsButton onClick={() => setImportOpen(true)} />
+            <Dropdown
+              menu={{
+                items: [
+                  {
+                    key: "import",
+                    label: "批量导入",
+                    onClick: () => setImportOpen(true),
+                  },
+                ],
+              }}
+              trigger={["click"]}
+            >
+              <Button icon={<MoreOutlined />}>更多</Button>
+            </Dropdown>
           </Space>
         }
       />
@@ -277,7 +346,12 @@ export function QuestionsPage() {
           />
         </div>
         {query.isLoading && <LoadingBlock rows={10} />}
-        {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
+        {query.isError && (
+          <ErrorState
+            error={query.error}
+            onRetry={() => void query.refetch()}
+          />
+        )}
         {query.data && query.data.total === 0 && (
           <EmptyState
             title="问题池还没有内容"
@@ -290,8 +364,15 @@ export function QuestionsPage() {
             rowKey="id"
             columns={columns}
             dataSource={query.data.items}
-            scroll={{ x: 980 }}
-            pagination={{ pageSize: 12, total: query.data.total, showTotal: (total) => `共 ${total} 条` }}
+            className="comfortable-table"
+            pagination={{
+              current: list.page,
+              onChange: (page) => list.set("page", page),
+              showSizeChanger: false,
+              pageSize: 12,
+              total: query.data.total,
+              showTotal: (total) => `共 ${total} 条`,
+            }}
           />
         )}
       </section>
@@ -300,7 +381,10 @@ export function QuestionsPage() {
         onClose={() => setAddOpen(false)}
         onCreated={(id) => navigate(`/questions/${id}`)}
       />
-      <ImportQuestionsModal open={importOpen} onClose={() => setImportOpen(false)} />
+      <ImportQuestionsModal
+        open={importOpen}
+        onClose={() => setImportOpen(false)}
+      />
     </div>
   );
 }
