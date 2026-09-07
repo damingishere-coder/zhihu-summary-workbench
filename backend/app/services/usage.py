@@ -98,6 +98,8 @@ async def model_usage_overview(
         or 0
     )
     return ModelUsageOverview(
+        cost_known=not any(item.provider in {"codex", "codex_cli"} for item in rows),
+        usage_known=not any(item.provider in {"codex", "codex_cli"} for item in rows),
         date=target,
         calls=len(rows),
         input_tokens=sum(item.input_tokens for item in rows),

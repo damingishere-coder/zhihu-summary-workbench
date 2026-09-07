@@ -14,6 +14,7 @@ import { api } from "../api/client";
 import { ActivityRail } from "../components/ActivityRail";
 import { InfrastructureHealth } from "../components/InfrastructureHealth";
 import { MetricStrip } from "../components/MetricStrip";
+import { ProductionPlanPanel } from "../components/ProductionPlanPanel";
 import { PageHeader } from "../components/PageHeader";
 import { ProgressCell } from "../components/ProgressCell";
 import {
@@ -113,6 +114,7 @@ export function DashboardPage() {
           </Space>
         }
       />
+      <ProductionPlanPanel />
       {query.isLoading && <LoadingBlock rows={12} />}
       {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
       {query.data && (

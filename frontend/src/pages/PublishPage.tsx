@@ -27,6 +27,7 @@ import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { PageHeader } from "../components/PageHeader";
+import { ProductionPlanPanel } from "../components/ProductionPlanPanel";
 import { ErrorState, LoadingBlock } from "../components/StateViews";
 import { StatusTag } from "../components/StatusTag";
 import type { Draft, PublishReadiness, PublishSchedule } from "../types";
@@ -185,11 +186,11 @@ export function PublishPage() {
     {
       title: "操作",
       key: "actions",
-      width: 105,
+      width: 220,
       render: (_: unknown, row: ReadyRow) => (
-        <Button size="small" type="primary" disabled={!row.readiness.ready} onClick={() => setScheduleDraft(row)}>
+        <Space><Button size="small" disabled={!row.readiness.ready} href={row.readiness.ready ? api.publishPackageUrl(row.id) : undefined}>下载发布包</Button><Button size="small" type="primary" disabled={!row.readiness.ready} onClick={() => setScheduleDraft(row)}>
           加入排期
-        </Button>
+        </Button></Space>
       ),
     },
   ];
@@ -206,13 +207,14 @@ export function PublishPage() {
         type="info"
         showIcon
         icon={<SafetyCertificateOutlined />}
-        title="自动发布默认关闭"
-        description="每次执行都必须输入“确认发布”。辅助模式遇到未登录、验证码、风控或浏览器不可用时只会暂停并留下记录。"
+        title="人工审核与发布"
+        description="审核通过后下载文章、信息图和来源组成的发布包；在知乎完成最后发布。工作台不会自动发布。"
       />
+      <ProductionPlanPanel />
       <div className="publish-stat-strip">
         <Statistic title="今日计划" value={plan.data?.question_limit ?? 0} suffix="题" prefix={<ClockCircleOutlined />} />
         <Statistic title="今日模型调用" value={usage.data?.calls ?? 0} suffix="次" />
-        <Statistic title="估算费用" value={usage.data?.estimated_cost ?? 0} precision={4} prefix={<DollarOutlined />} />
+        <Statistic title="估算费用" value={usage.data?.cost_known === false ? "未知（Codex 额度）" : usage.data?.estimated_cost ?? 0} precision={4} prefix={<DollarOutlined />} />
         <Statistic title="手动生图 Prompt" value={usage.data?.manual_image_generations ?? 0} suffix="次" />
       </div>
       <section className="work-surface publish-workspace">

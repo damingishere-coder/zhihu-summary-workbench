@@ -14,6 +14,7 @@ const unpaired: BrowserBridgeStatus = {
   last_seen_at: null,
   last_check_at: null,
   active_job_id: null,
+  latest_capture: null,
   message: "尚未配对 Chrome 扩展",
 };
 
@@ -72,5 +73,32 @@ describe("Chrome 扩展桥接", () => {
     const button = await screen.findByRole("button", { name: "用 Chrome 重新获取并继续" });
     fireEvent.click(button);
     await waitFor(() => expect(retryCollection).toHaveBeenCalledTimes(1));
+  });
+
+  it("展示最近 DOM 采集数量和页面变化诊断", async () => {
+    vi.spyOn(api, "browserBridgeStatus").mockResolvedValue({
+      ...unpaired,
+      connection: "connected",
+      zhihu_auth: "authenticated",
+      extension_version: "0.2.0",
+      message: "扩展在线",
+      latest_capture: {
+        job_id: "job-2",
+        status: "failed",
+        source: "extension",
+        capture_version: 2,
+        capture_method: "rendered_dom",
+        page_url: "https://www.zhihu.com/question/58173613",
+        visible_answer_count: 2,
+        collected_answer_count: 0,
+        diagnostics: [
+          { code: "answer_structure_changed", level: "error", message: "页面结构发生变化" },
+        ],
+      },
+    });
+    renderBrowserSettings();
+    await screen.findByText("当前页面 DOM");
+    expect(screen.getByText("0 / 可见 2")).toBeInTheDocument();
+    expect(screen.getByText("页面结构发生变化")).toBeInTheDocument();
   });
 });

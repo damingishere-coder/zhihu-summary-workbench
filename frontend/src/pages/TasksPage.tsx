@@ -90,6 +90,7 @@ export function TasksPage() {
     },
     onError: (error) => message.error(error.message),
   });
+  const resume = useMutation({ mutationFn: (task: Task) => task.error_message?.startsWith("资料不足") ? api.continuePartialTask(task.id) : api.continueTask(task.id), onSuccess: refresh, onError: error => message.error(error.message) });
   const cancel = useMutation({
     mutationFn: api.cancelTask,
     onSuccess: async () => {
@@ -164,10 +165,11 @@ export function TasksPage() {
     {
       title: "操作",
       key: "actions",
-      width: 120,
+      width: 220,
       fixed: "right" as const,
       render: (_: unknown, task: Task) => (
         <Space size={2}>
+          {["paused", "image_result_unknown"].includes(task.status) && <Button size="small" loading={resume.isPending} onClick={() => resume.mutate(task)}>{task.error_message?.startsWith("资料不足") ? "按现有资料继续" : task.status === "image_result_unknown" ? "核对图片后继续" : "继续"}</Button>}
           <Tooltip title="查看任务详情和完整日志">
             <Button type="text" aria-label="查看任务详情" icon={<EyeOutlined />} onClick={() => setSelectedId(task.id)} />
           </Tooltip>

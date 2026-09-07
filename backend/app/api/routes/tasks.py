@@ -229,3 +229,16 @@ async def stream_queue_status(
             "X-Accel-Buffering": "no",
         },
     )
+
+
+@router.post("/tasks/{task_id}/continue", response_model=TaskRead)
+async def continue_task(task_id: str, allow_partial: bool = False, session: AsyncSession = Depends(get_db_session), broker: QueueBroker = Depends(get_broker)):
+    from backend.app.services.checkpoints import resume_task
+    task = await load_task(session, task_id)
+    if not task:
+        raise HTTPException(404, "任务不存在")
+    try:
+        await resume_task(session, broker, task, allow_partial=allow_partial)
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+    return task_to_read(await load_task(session, task_id))

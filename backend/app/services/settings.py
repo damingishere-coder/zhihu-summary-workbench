@@ -218,8 +218,8 @@ async def update_public_settings(
     auto_publish = bool(
         values.get("auto_publish_enabled", current.auto_publish_enabled)
     )
-    if auto_publish and not auto_production:
-        raise ValueError("开启自动发布前必须先开启自动生产")
+    if auto_publish or auto_production:
+        raise ValueError("当前工作台由用户手动执行计划，不能开启自动生产或自动发布")
     for key, value in values.items():
         await set_setting(session, key, value)
     await session.commit()

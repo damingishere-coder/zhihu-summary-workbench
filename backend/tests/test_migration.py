@@ -46,3 +46,15 @@ def test_alembic_initial_migration_creates_required_tables(tmp_path) -> None:
         "prompt_versions",
     }
     assert required.issubset(tables)
+    with sqlite3.connect(database_path) as connection:
+        collection_job_columns = {
+            row[1] for row in connection.execute("PRAGMA table_info(collection_jobs)")
+        }
+    assert {
+        "capture_version",
+        "capture_method",
+        "capture_page_url",
+        "visible_answer_count",
+        "collected_answer_count",
+        "capture_diagnostics_json",
+    }.issubset(collection_job_columns)

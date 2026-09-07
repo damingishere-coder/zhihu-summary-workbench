@@ -26,7 +26,14 @@ from backend.app.collectors.zhihu import (
 from backend.app.models.browser_bridge import BrowserBridgeClient, CollectionJob
 from backend.app.models.common import utc_now
 from backend.app.models.core import Question, TaskJob, TaskLog
-from backend.app.schemas.browser_bridge import ImportBundleV1, PROTOCOL_VERSION
+from backend.app.schemas.browser_bridge import (
+    BridgeCaptureDiagnostic,
+    BridgeCollectionBundle,
+    CollectionBundleV2,
+    CollectionBundleV3,
+    ImportBundleV1,
+    PROTOCOL_VERSION,
+)
 from backend.app.services.queue import QueueBroker
 
 
@@ -67,6 +74,62 @@ def _safe_url(value: str) -> str:
     if parsed.scheme in {"http", "https"} or (not parsed.scheme and value.startswith("/")):
         return value
     return ""
+
+
+def _apply_capture_attempt(job: CollectionJob, capture: dict[str, Any] | None) -> None:
+    if not capture:
+        return
+    method = str(capture.get("method") or "")
+    if method not in {"rendered_dom", "same_origin_api"}:
+        return
+    page_url = _safe_url(str(capture.get("page_url") or ""))
+    parsed = urlsplit(page_url) if page_url else None
+    if parsed and parsed.hostname not in {"zhihu.com", "www.zhihu.com"}:
+        page_url = ""
+    diagnostics: list[dict[str, Any]] = []
+    for raw in list(capture.get("diagnostics") or [])[:30]:
+        try:
+            diagnostics.append(
+                BridgeCaptureDiagnostic.model_validate(raw).model_dump(mode="json")
+            )
+        except ValidationError:
+            continue
+    job.capture_version = 2
+    job.capture_method = method
+    job.capture_page_url = page_url or None
+
+    def bounded_int(value: object, maximum: int) -> int | None:
+        if value is None:
+            return None
+        try:
+            return max(0, min(int(value), maximum))
+        except (TypeError, ValueError):
+            return None
+
+    job.visible_answer_count = bounded_int(
+        capture.get("visible_answer_count"), 100_000_000
+    )
+    job.collected_answer_count = bounded_int(
+        capture.get("collected_answer_count"), 100_000_000
+    )
+    job.collected_answer_count = max(job.collected_answer_count or 0, len(job.result_json.get("answers", [])))
+    job.capture_diagnostics_json = diagnostics
+
+
+def _job_capture_result(
+    job: CollectionJob, *, recommended_action: str | None = None
+) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "version": job.capture_version,
+        "method": job.capture_method,
+        "page_url": job.capture_page_url,
+        "visible_answer_count": job.visible_answer_count,
+        "collected_answer_count": job.collected_answer_count,
+        "diagnostics": job.capture_diagnostics_json or [],
+    }
+    if recommended_action:
+        result["recommended_action"] = recommended_action
+    return result
 
 
 class _SafeHtmlParser(HTMLParser):
@@ -120,8 +183,24 @@ def sanitize_zhihu_html(value: str) -> str:
     return "".join(parser.parts)
 
 
+def validate_collection_bundle(payload: dict[str, Any]) -> BridgeCollectionBundle:
+    bundle_format = str(payload.get("format") or "")
+    try:
+        if bundle_format == "CollectionBundleV3":
+            return CollectionBundleV3.model_validate(payload)
+        if bundle_format == "CollectionBundleV2":
+            return CollectionBundleV2.model_validate(payload)
+        if bundle_format == "ImportBundleV1":
+            return ImportBundleV1.model_validate(payload)
+    except ValidationError as exc:
+        raise ValueError(
+            f"扩展结果格式无效：{exc.errors(include_url=False)}"
+        ) from exc
+    raise ValueError("扩展结果格式无效：只接受 ImportBundleV1 或 CollectionBundleV2")
+
+
 def bundle_to_fetch_result(
-    bundle: ImportBundleV1, *, collector_mode: str
+    bundle: BridgeCollectionBundle, *, collector_mode: str
 ) -> ZhihuFetchResult:
     question_payload = bundle.question
     question = CollectedQuestion(
@@ -176,11 +255,16 @@ def bundle_to_fetch_result(
                 filter_reason=basic_filter_reason(plain),
             )
         )
+    capture: dict[str, Any] = {}
+    if isinstance(bundle, CollectionBundleV2):
+        capture = bundle.capture.model_dump(mode="json")
+        capture["version"] = bundle.version
     return ZhihuFetchResult(
         question=question,
         answers=answers,
         collector_mode=collector_mode,
         warnings=[item[:500] for item in bundle.warnings],
+        capture=capture,
     )
 
 
@@ -278,10 +362,20 @@ class BrowserBridgeManager:
             await previous.websocket.close(code=4001, reason="扩展已在新连接中上线")
 
     async def unregister(self, client_id: str, websocket: WebSocket) -> None:
+        disconnected = False
         async with self._lock:
             current = self._connections.get(client_id)
             if current and current.websocket is websocket:
                 self._connections.pop(client_id, None)
+                disconnected = True
+        if disconnected:
+            from backend.app.db.session import get_session_factory
+            from backend.app.services.checkpoints import pause_tasks
+            async with get_session_factory()() as session:
+                ids = list((await session.scalars(select(CollectionJob.task_id).where(
+                    CollectionJob.client_id == client_id, CollectionJob.status == "dispatched",
+                    CollectionJob.task_id.is_not(None)))).all())
+                await pause_tasks(session, ids)
 
     async def disconnect_all(self) -> None:
         async with self._lock:
@@ -290,28 +384,64 @@ class BrowserBridgeManager:
         for item in connections:
             await item.websocket.close(code=4002, reason="配对已撤销")
 
+    async def send_control(self, client_id: str, payload: dict) -> bool:
+        connection = self._connections.get(client_id)
+        if connection is None:
+            return False
+        try:
+            await connection.websocket.send_json(payload)
+            return True
+        except Exception:
+            return False
+
     async def dispatch_job(
         self, job: CollectionJob, *, client_id: str | None = None
     ) -> str | None:
-        connection = (
-            self._connections.get(client_id)
-            if client_id
-            else next(iter(self._connections.values()), None)
-        )
-        if connection is None:
-            return None
-        payload = {
-            "type": "collect_question",
-            "protocol_version": PROTOCOL_VERSION,
-            "job_id": job.id,
-            "nonce": job.nonce,
-            **job.request_json,
-        }
-        try:
-            await connection.websocket.send_json(payload)
-        except Exception:
-            return None
-        return connection.client_id
+        from backend.app.db.session import get_session_factory
+        async with self._lock:
+            connection = (self._connections.get(client_id) if client_id else next(iter(self._connections.values()), None))
+            if connection is None:
+                return None
+            async with get_session_factory()() as session:
+                current = await session.get(CollectionJob, job.id)
+                if not current or current.status != "pending":
+                    return None
+                busy = await session.scalar(select(CollectionJob.id).where(CollectionJob.status == "dispatched", CollectionJob.id != job.id).limit(1))
+                if busy:
+                    return None
+                task = await session.get(TaskJob, current.task_id) if current.task_id else None
+                if task and (task.payload.get("pause_requested") or task.status in {"paused", "cancelled"}):
+                    return None
+                client = await session.get(BrowserBridgeClient, connection.client_id)
+                if client and client.zhihu_auth in {"login_required", "verification_required"}:
+                    return None
+                if current.request_json.get("chunked") and client and client.extension_version not in {"0.3.0"}:
+                    current.error_message = "请重新加载知乎工作台扩展 0.3.0，旧版不支持分批持久采集"
+                    if task:
+                        task.error_message = current.error_message
+                    await session.commit()
+                    return None
+                current.status = "dispatched"
+                current.client_id = connection.client_id
+                current.dispatched_at = utc_now()
+                # Persist the receiver and lease before a fast browser can reply.
+                await session.commit()
+                payload = {"type": "collect_question", "protocol_version": PROTOCOL_VERSION,
+                    "job_id": current.id, "nonce": current.nonce, **current.request_json,
+                    "known_answer_ids": [str(row["id"]) for row in current.result_json.get("answers", [])],
+                    "elapsed_seconds": current.result_json.get("capture", {}).get("elapsed_seconds", 0)}
+                try:
+                    await connection.websocket.send_json(payload)
+                except Exception:
+                    current.status = "paused"
+                    if task:
+                        task.status = "paused"
+                        task.error_message = "扩展发送中断，已暂停；请手动继续"
+                        await session.execute(update(Question).where(Question.id == task.question_id).values(status="paused"))
+                    await session.commit()
+                    return None
+                return connection.client_id
+
 
 
 bridge_manager = BrowserBridgeManager()
@@ -336,11 +466,6 @@ async def run_bridge_dispatch_loop(
                 dispatched_client_id = (
                     await bridge_manager.dispatch_job(job) if job else None
                 )
-                if job and dispatched_client_id:
-                    job.status = "dispatched"
-                    job.client_id = dispatched_client_id
-                    job.dispatched_at = utc_now()
-                    await session.commit()
         try:
             await asyncio.wait_for(stop_event.wait(), timeout=2)
         except TimeoutError:
@@ -375,6 +500,10 @@ async def create_collection_job(
             "question_url": task.question.url,
             "mode": mode,
             "max_answers": max_answers,
+            "capture_strategy": "rendered_dom",
+            "read_all": bool(task.payload.get("produce_images")),
+            "chunked": True,
+            "capture_budget_seconds": int(task.payload.get("capture_budget_seconds", 1800)),
         },
     )
     session.add(job)
@@ -416,14 +545,13 @@ async def complete_collection_job(
     nonce: str,
     bundle_payload: dict[str, Any],
 ) -> str:
-    try:
-        bundle = ImportBundleV1.model_validate(bundle_payload)
-    except ValidationError as exc:
-        raise ValueError(f"扩展结果格式无效：{exc.errors(include_url=False)}") from exc
+    bundle = validate_collection_bundle(bundle_payload)
     async with session_factory() as session:
         job = await session.get(CollectionJob, job_id)
         if not job or not secrets.compare_digest(job.nonce, nonce):
             raise ValueError("采集任务或 nonce 无效")
+        if job.client_id and job.client_id != client_id:
+            raise ValueError("当前扩展不是该采集任务的接收方")
         if job.status == "completed":
             return "duplicate"
         if job.status not in {"pending", "dispatched"}:
@@ -433,11 +561,22 @@ async def complete_collection_job(
         question = await session.get(Question, job.question_id)
         if not question or bundle.question.id != question.external_id:
             raise ValueError("扩展结果的问题 id 与任务不一致")
-        if len(bundle.answers) > job.max_answers:
+        if len(bundle.answers) > job.max_answers and not job.request_json.get("read_all"):
             raise ValueError("扩展返回的回答数量超过任务上限")
+        if job.request_json.get("read_all") and bundle.version < 3:
+            raise ValueError("完整采集任务需要新版扩展分批确认，不接受旧版单次完成结果")
         job.status = "completed"
         job.client_id = client_id
         job.result_json = bundle.model_dump(mode="json")
+        job.capture_version = bundle.version
+        if isinstance(bundle, CollectionBundleV2):
+            job.capture_method = bundle.capture.method
+            job.capture_page_url = bundle.capture.page_url
+            job.visible_answer_count = bundle.capture.visible_answer_count
+            job.collected_answer_count = bundle.capture.collected_answer_count
+            job.capture_diagnostics_json = [
+                item.model_dump(mode="json") for item in bundle.capture.diagnostics
+            ]
         job.completed_at = utc_now()
         job.error_message = None
         task = await session.get(TaskJob, job.task_id) if job.task_id else None
@@ -458,8 +597,16 @@ async def complete_collection_job(
                     task_id=task.id,
                     level="info",
                     stage="queued",
-                    message=f"Chrome 扩展已回传 {len(bundle.answers)} 条回答，任务重新入队",
-                    metadata_json={"collection_job_id": job.id},
+                    message=(
+                        f"Chrome 扩展已通过 {job.capture_method or '兼容模式'} "
+                        f"回传 {len(bundle.answers)} 条回答，任务重新入队"
+                    ),
+                    metadata_json={
+                        "collection_job_id": job.id,
+                        "capture_method": job.capture_method,
+                        "visible_answer_count": job.visible_answer_count,
+                        "collected_answer_count": job.collected_answer_count,
+                    },
                 )
             )
         await session.commit()
@@ -506,6 +653,7 @@ async def block_collection_job(
     nonce: str,
     reason: str,
     message: str,
+    capture: dict[str, Any] | None = None,
 ) -> None:
     target = "waiting_login" if reason == "login_required" else "waiting_verification"
     async with session_factory() as session:
@@ -518,7 +666,11 @@ async def block_collection_job(
             raise ValueError("当前扩展不是该采集任务的接收方")
         job.status = "blocked"
         job.client_id = client_id
+        client = await session.get(BrowserBridgeClient, client_id)
+        if client:
+            client.zhihu_auth = reason
         job.error_message = message[:2000]
+        _apply_capture_attempt(job, capture)
         task = await session.get(TaskJob, job.task_id) if job.task_id else None
         if task:
             question = await session.get(Question, task.question_id)
@@ -527,6 +679,15 @@ async def block_collection_job(
             task.worker_id = None
             task.completed_at = None
             task.error_message = message[:2000]
+            task.result = {
+                **(task.result or {}),
+                "capture": _job_capture_result(
+                    job,
+                    recommended_action=(
+                        "login" if reason == "login_required" else "complete_verification"
+                    ),
+                ),
+            }
             if question:
                 question.status = target
             session.add(
@@ -535,7 +696,12 @@ async def block_collection_job(
                     level="warning",
                     stage=target,
                     message=message[:2000],
-                    metadata_json={"collection_job_id": job.id, "reason": reason},
+                    metadata_json={
+                        "collection_job_id": job.id,
+                        "reason": reason,
+                        "capture_method": job.capture_method,
+                        "capture_page_url": job.capture_page_url,
+                    },
                 )
             )
         await session.commit()
@@ -561,6 +727,7 @@ async def fail_collection_job(
     job_id: str,
     nonce: str,
     message: str,
+    capture: dict[str, Any] | None = None,
 ) -> None:
     async with session_factory() as session:
         job = await session.get(CollectionJob, job_id)
@@ -573,6 +740,7 @@ async def fail_collection_job(
         job.status = "failed"
         job.client_id = client_id
         job.error_message = message[:2000]
+        _apply_capture_attempt(job, capture)
         task = await session.get(TaskJob, job.task_id) if job.task_id else None
         if task:
             question = await session.get(Question, task.question_id)
@@ -580,6 +748,12 @@ async def fail_collection_job(
             task.stage = "waiting_browser"
             task.worker_id = None
             task.error_message = message[:2000]
+            task.result = {
+                **(task.result or {}),
+                "capture": _job_capture_result(
+                    job, recommended_action="retry_visible_page_or_import_json"
+                ),
+            }
             if question:
                 question.status = "waiting_browser"
             session.add(
@@ -588,7 +762,12 @@ async def fail_collection_job(
                     level="error",
                     stage="waiting_browser",
                     message=f"扩展采集失败，可重新获取或导入 JSON：{message[:1500]}",
-                    metadata_json={"collection_job_id": job.id},
+                    metadata_json={
+                        "collection_job_id": job.id,
+                        "capture_method": job.capture_method,
+                        "capture_page_url": job.capture_page_url,
+                        "diagnostics": job.capture_diagnostics_json,
+                    },
                 )
             )
         await session.commit()

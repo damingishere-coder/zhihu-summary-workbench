@@ -1,13 +1,32 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Literal, TypeAlias
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, Field, field_validator
 
 
 PROTOCOL_VERSION = 1
 MAX_BRIDGE_PAYLOAD_BYTES = 6 * 1024 * 1024
+
+
+class BridgeCaptureDiagnostic(BaseModel):
+    code: str = Field(min_length=1, max_length=64)
+    level: Literal["info", "warning", "error"] = "info"
+    message: str = Field(min_length=1, max_length=500)
+
+
+class BrowserCaptureSummary(BaseModel):
+    job_id: str
+    status: str
+    source: str
+    capture_version: int | None = None
+    capture_method: str | None = None
+    page_url: str | None = None
+    visible_answer_count: int | None = None
+    collected_answer_count: int | None = None
+    diagnostics: list[BridgeCaptureDiagnostic] = Field(default_factory=list)
 
 
 class BrowserBridgeStatus(BaseModel):
@@ -17,6 +36,7 @@ class BrowserBridgeStatus(BaseModel):
     last_seen_at: datetime | None = None
     last_check_at: datetime | None = None
     active_job_id: str | None = None
+    latest_capture: BrowserCaptureSummary | None = None
     message: str
 
 
@@ -67,9 +87,29 @@ class BridgeAnswerPayload(BaseModel):
     updated_time: int | None = Field(default=None, ge=0)
 
 
-class ImportBundleV1(BaseModel):
-    format: Literal["ImportBundleV1"] = "ImportBundleV1"
-    version: Literal[1] = 1
+class BridgeCaptureMetadata(BaseModel):
+    method: Literal["rendered_dom", "same_origin_api"]
+    page_url: str = Field(min_length=1, max_length=1000)
+    visible_answer_count: int = Field(ge=0, le=100_000_000)
+    collected_answer_count: int = Field(ge=0, le=100_000_000)
+    stop_reason: str = Field(default="", max_length=64)
+    reached_end: bool = False
+    elapsed_seconds: float = Field(default=0, ge=0, le=1800)
+    diagnostics: list[BridgeCaptureDiagnostic] = Field(default_factory=list, max_length=30)
+
+    @field_validator("page_url")
+    @classmethod
+    def page_url_must_be_zhihu(cls, value: str) -> str:
+        parsed = urlsplit(value.strip())
+        if parsed.scheme != "https" or parsed.hostname not in {
+            "zhihu.com",
+            "www.zhihu.com",
+        }:
+            raise ValueError("采集页面必须是知乎 HTTPS 地址")
+        return value.strip()
+
+
+class _BridgeBundleBase(BaseModel):
     collected_at: datetime
     mode: Literal["representative", "complete"] = "representative"
     question: BridgeQuestionPayload
@@ -88,6 +128,38 @@ class ImportBundleV1(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("导入数据包含重复回答 id")
         return answers
+
+
+class ImportBundleV1(_BridgeBundleBase):
+    format: Literal["ImportBundleV1"] = "ImportBundleV1"
+    version: Literal[1] = 1
+
+
+class CollectionBundleV2(_BridgeBundleBase):
+    format: Literal["CollectionBundleV2"] = "CollectionBundleV2"
+    version: Literal[2] = 2
+    capture: BridgeCaptureMetadata
+
+    @field_validator("capture")
+    @classmethod
+    def capture_count_matches_answers(
+        cls, capture: BridgeCaptureMetadata, info
+    ) -> BridgeCaptureMetadata:
+        answers = info.data.get("answers") or []
+        if capture.collected_answer_count != len(answers):
+            raise ValueError("采集统计与回答数量不一致")
+        if capture.visible_answer_count < capture.collected_answer_count:
+            raise ValueError("可见回答数量不能少于已采集数量")
+        return capture
+
+
+class CollectionBundleV3(CollectionBundleV2):
+    format: Literal["CollectionBundleV3"] = "CollectionBundleV3"
+    version: Literal[3] = 3
+    answers: list[BridgeAnswerPayload] = Field(min_length=1)
+
+
+BridgeCollectionBundle: TypeAlias = ImportBundleV1 | CollectionBundleV2 | CollectionBundleV3
 
 
 class ImportAnswersResponse(BaseModel):

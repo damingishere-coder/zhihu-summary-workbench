@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, ForeignKey, Index, JSON, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, JSON, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.app.db.base import Base
@@ -45,6 +45,14 @@ class CollectionJob(Base, UuidPrimaryKeyMixin, TimestampMixin):
     mode: Mapped[str] = mapped_column(String(32), default="representative")
     max_answers: Mapped[int] = mapped_column(default=20)
     source: Mapped[str] = mapped_column(String(32), default="extension")
+    capture_version: Mapped[int | None] = mapped_column(Integer)
+    capture_method: Mapped[str | None] = mapped_column(String(32))
+    capture_page_url: Mapped[str | None] = mapped_column(String(1000))
+    visible_answer_count: Mapped[int | None] = mapped_column(Integer)
+    collected_answer_count: Mapped[int | None] = mapped_column(Integer)
+    capture_diagnostics_json: Mapped[list[dict[str, Any]]] = mapped_column(
+        JSON, default=list, nullable=False
+    )
     request_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     result_json: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
     error_message: Mapped[str | None] = mapped_column(Text)

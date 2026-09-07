@@ -81,6 +81,10 @@ export function QuestionsPage() {
     },
     onError: (error) => message.error(error.message),
   });
+  const hotMutation = useMutation({ mutationFn: api.fetchHotQuestions, onSuccess: async result => {
+    message.info(result.warnings?.length ? result.warnings.join("；") : `热榜已同步：新增 ${result.created}，更新 ${result.updated}`);
+    await refresh();
+  }, onError: error => message.error(error.message) });
   const updateMutation = useMutation({
     mutationFn: ({ id, payload }: { id: string; payload: Partial<Question> }) =>
       api.updateQuestion(id, payload),
@@ -226,8 +230,8 @@ export function QuestionsPage() {
         description="管理热门问题、手动推荐和已进入处理流程的问题。"
         actions={
           <Space wrap>
-            <Tooltip title="扩展协议 v1 暂不采集热榜，请使用手动添加或批量导入">
-              <Button disabled>知乎热榜暂不可用</Button>
+            <Tooltip title="通过已配对的 Chrome 扩展读取知乎热榜">
+              <Button loading={hotMutation.isPending} onClick={() => hotMutation.mutate()}>同步知乎热榜</Button>
             </Tooltip>
             <AddQuestionButton onClick={() => setAddOpen(true)} />
             <ImportQuestionsButton onClick={() => setImportOpen(true)} />

@@ -158,6 +158,7 @@ class ZhihuFetchResult:
     collector_mode: str
     batch_id: str = field(default_factory=lambda: uuid.uuid4().hex)
     warnings: list[str] = field(default_factory=list)
+    capture: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

@@ -35,6 +35,14 @@ function authLabel(value: string) {
   }[value] ?? value;
 }
 
+function captureMethodLabel(value: string | null | undefined) {
+  return {
+    rendered_dom: "当前页面 DOM",
+    same_origin_api: "显式同源 API",
+    json_import: "人工 JSON 导入",
+  }[value ?? ""] ?? value ?? "—";
+}
+
 function validateImportBundle(value: unknown): ImportBundleV1 {
   if (!value || typeof value !== "object") throw new Error("文件内容必须是 JSON 对象");
   const bundle = value as Partial<ImportBundleV1>;
@@ -161,7 +169,27 @@ export function BrowserSettingsPage() {
             <Descriptions.Item label="最近连接">{state.last_seen_at ? formatDateTime(state.last_seen_at, true) : "—"}</Descriptions.Item>
             <Descriptions.Item label="最近登录检查">{state.last_check_at ? formatDateTime(state.last_check_at, true) : "—"}</Descriptions.Item>
             <Descriptions.Item label="活动采集任务" span={2}>{state.active_job_id || "—"}</Descriptions.Item>
+            <Descriptions.Item label="最近采集方式">
+              {captureMethodLabel(state.latest_capture?.capture_method)}
+            </Descriptions.Item>
+            <Descriptions.Item label="最近采集数量">
+              {state.latest_capture?.collected_answer_count ?? "—"} / 可见 {state.latest_capture?.visible_answer_count ?? "—"}
+            </Descriptions.Item>
+            {state.latest_capture?.page_url && (
+              <Descriptions.Item label="最近采集页面" span={2}>
+                <a href={state.latest_capture.page_url} target="_blank" rel="noreferrer">打开知乎问题页</a>
+              </Descriptions.Item>
+            )}
           </Descriptions>
+
+          {state.latest_capture?.diagnostics?.filter((item) => item.level !== "info").map((item) => (
+            <Alert
+              key={`${item.code}-${item.message}`}
+              type={item.level === "error" ? "error" : "warning"}
+              showIcon
+              title={item.message}
+            />
+          ))}
 
           {pairing.data && (
             <Alert

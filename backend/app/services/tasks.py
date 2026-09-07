@@ -1,9 +1,13 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
+from types import SimpleNamespace
+from backend.app.services.checkpoints import checkpoint, PipelinePaused
+from backend.app.ai.providers.codex_image import ImageResultUnknown
 
-from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
 
@@ -17,7 +21,6 @@ from backend.app.core.state_machine import assert_task_transition
 from backend.app.models.common import utc_now
 from backend.app.models.core import Question, TaskJob, TaskLog
 from backend.app.models.browser_bridge import CollectionJob
-from backend.app.schemas.browser_bridge import ImportBundleV1
 from backend.app.schemas.analysis import FetchAnswersRequest
 from backend.app.services.content_pipeline import (
     evaluate_answers,
@@ -35,6 +38,7 @@ from backend.app.services.browser_bridge import (
     bridge_manager,
     bundle_to_fetch_result,
     create_collection_job,
+    validate_collection_bundle,
 )
 
 
@@ -122,6 +126,8 @@ async def create_task(
             "fetch_mode": "representative",
             "collector_mode": "auto",
             "max_answers": settings.max_answers_per_question,
+            "produce_images": settings.app_env != "test",
+            "capture_budget_seconds": 1800,
         },
     )
     question.status = "queued"
@@ -213,6 +219,7 @@ async def retry_collection_task(
     task: TaskJob,
 ) -> tuple[CollectionJob, bool]:
     allowed = {
+        "paused",
         "waiting_browser",
         "waiting_login",
         "waiting_verification",
@@ -251,8 +258,13 @@ async def retry_collection_task(
             await session.commit()
             raise ValueError(task.error_message) from exc
         return existing_job, False
+    if existing_job and existing_job.status in {"paused", "blocked", "failed", "cancelled"}:
+        from backend.app.services.checkpoints import resume_task
+        await resume_task(session, broker, task)
+        await session.refresh(existing_job)
+        return existing_job, False
     mode = str((task.payload or {}).get("fetch_mode", "representative"))
-    max_answers = min(20, int((task.payload or {}).get("max_answers", 20)))
+    max_answers = int((task.payload or {}).get("max_answers", 100))
     job = await create_collection_job(
         session,
         task,
@@ -261,11 +273,7 @@ async def retry_collection_task(
     )
     dispatched_client_id = await bridge_manager.dispatch_job(job)
     dispatched = bool(dispatched_client_id)
-    if dispatched_client_id:
-        job.status = "dispatched"
-        job.client_id = dispatched_client_id
-        job.dispatched_at = utc_now()
-        await session.commit()
+    await session.refresh(job)
     await publish_task_state(broker, task)
     return job, dispatched
 
@@ -292,6 +300,8 @@ async def cancel_task(
     if task.status in {"waiting_review", "review_approved", "failed", "cancelled"}:
         raise ValueError("当前任务状态不能取消")
     task.cancel_requested = True
+    await session.execute(update(CollectionJob).where(CollectionJob.task_id == task.id,
+        CollectionJob.status.in_(["pending", "dispatched", "blocked", "paused"])).values(status="cancelled"))
     if task.status in {"queued", "waiting_browser", "waiting_login", "waiting_verification"}:
         assert_task_transition(task.status, "cancelled")
         task.status = "cancelled"
@@ -334,6 +344,9 @@ async def _set_progress(
     progress: int,
     message: str,
 ) -> None:
+    await session.refresh(task, ["payload", "cancel_requested"])
+    if (task.payload or {}).get("pause_requested"):
+        raise PipelinePaused("已按要求暂停；点击继续可从检查点恢复")
     task.stage = stage
     task.progress = progress
     await add_task_log(session, task, stage=stage, message=message)
@@ -421,27 +434,21 @@ async def process_task(
                     else None
                 )
                 if collection_job is None or collection_job.status != "completed":
-                    collection_job = await create_collection_job(
-                        session,
-                        task,
-                        mode=str(task.payload.get("fetch_mode", "representative")),
-                        max_answers=min(
-                            20,
-                            int(task.payload.get("max_answers", settings.max_answers_per_question)),
-                        ),
-                    )
-                    dispatched_client_id = await bridge_manager.dispatch_job(collection_job)
-                    if dispatched_client_id:
-                        collection_job.status = "dispatched"
-                        collection_job.client_id = dispatched_client_id
-                        collection_job.dispatched_at = utc_now()
+                    if collection_job is None or collection_job.status in {"superseded", "failed"}:
+                        collection_job = await create_collection_job(
+                            session, task,
+                            mode=str(task.payload.get("fetch_mode", "representative")),
+                            max_answers=int(task.payload.get("max_answers", settings.max_answers_per_question)),
+                        )
+                    else:
+                        task.status = task.question.status = "waiting_browser"
+                        task.stage = "waiting_browser"
                         await session.commit()
+                    dispatched_client_id = await bridge_manager.dispatch_job(collection_job)
+                    await session.refresh(collection_job)
                     await publish_task_state(broker, task)
                     return
-                try:
-                    bundle = ImportBundleV1.model_validate(collection_job.result_json)
-                except ValidationError as exc:
-                    raise ValueError("已保存的扩展采集结果格式无效") from exc
+                bundle = validate_collection_bundle(collection_job.result_json)
                 precollected = bundle_to_fetch_result(
                     bundle,
                     collector_mode=(
@@ -450,24 +457,51 @@ async def process_task(
                         else "json_import"
                     ),
                 )
-            fetch_result, fetch_counts = await fetch_and_store_answers(
-                session,
-                task.question,
-                settings,
-                FetchAnswersRequest(
-                    mode=str(task.payload.get("fetch_mode", "representative")),
-                    collector_mode=str(
-                        task.payload.get("collector_mode", "auto")
+                if not precollected.capture and collection_job.capture_method:
+                    precollected.capture = {
+                        "version": collection_job.capture_version,
+                        "method": collection_job.capture_method,
+                        "page_url": collection_job.capture_page_url,
+                        "visible_answer_count": collection_job.visible_answer_count,
+                        "collected_answer_count": collection_job.collected_answer_count,
+                        "diagnostics": collection_job.capture_diagnostics_json or [],
+                    }
+            saved_fetch = (task.result or {}).get("checkpoints", {}).get("fetch")
+            input_hash = hashlib.sha256(json.dumps(
+                sorted((a.external_id, a.content_hash) for a in precollected.answers), ensure_ascii=False
+            ).encode()).hexdigest() if precollected else None
+            if saved_fetch and input_hash and saved_fetch.get("input_hash") != input_hash:
+                task.result = {"checkpoints": {}, "previous_result_invalidated": "采集来源已变化，重新分析"}
+                saved_fetch = None
+                await session.commit()
+            if saved_fetch:
+                fetch_counts = saved_fetch["counts"]
+                fetch_result = SimpleNamespace(**saved_fetch["metadata"])
+            else:
+                fetch_result, fetch_counts = await fetch_and_store_answers(
+                    session,
+                    task.question,
+                    settings,
+                    FetchAnswersRequest(
+                        mode=str(task.payload.get("fetch_mode", "representative")),
+                        collector_mode=str(
+                            task.payload.get("collector_mode", "auto")
+                        ),
+                        max_answers=int(
+                            task.payload.get(
+                                "max_answers", settings.max_answers_per_question
+                            )
+                        ),
                     ),
-                    max_answers=int(
-                        task.payload.get(
-                            "max_answers", settings.max_answers_per_question
-                        )
-                    ),
-                ),
-                collector=collector,
-                precollected=precollected,
-            )
+                    collector=collector,
+                    precollected=precollected,
+                )
+                task.result = {**task.result, "checkpoints": {**task.result.get("checkpoints", {}), "fetch": {
+                    "input_hash": input_hash, "counts": fetch_counts, "metadata": {"collector_mode": fetch_result.collector_mode,
+                    "warnings": fetch_result.warnings, "capture": fetch_result.capture}}}}
+                await session.commit()
+            if task.payload.get("produce_images") and not task.payload.get("accept_partial") and fetch_counts["included"] < 10 and not fetch_result.capture.get("reached_end"):
+                raise PipelinePaused("资料不足：有效回答少于 10 条且尚未确认页面末尾。请继续采集后再生成正式内容")
             if fetch_counts["included"] < 1:
                 raise ValueError("没有采集到可分析的有效回答")
             assert_task_transition(task.status, "cleaning_answers")
@@ -499,9 +533,9 @@ async def process_task(
                 progress=30,
                 message="正在批量筛选回答质量和相关性",
             )
-            quality_counts = await evaluate_answers(
+            quality_counts = await checkpoint(session, task, "quality", lambda: evaluate_answers(
                 session, task.question, settings, task=task
-            )
+            ))
             if quality_counts["included"] < 1:
                 raise ValueError("质量筛选后没有可分析回答")
             if await _stop_if_cancelled(session, broker, task):
@@ -518,9 +552,9 @@ async def process_task(
                 progress=42,
                 message="正在分批提取每条回答的观点和适用条件",
             )
-            claim_counts = await extract_claims(
+            claim_counts = await checkpoint(session, task, "claims", lambda: extract_claims(
                 session, task.question, settings, task=task
-            )
+            ))
             if await _stop_if_cancelled(session, broker, task):
                 return
 
@@ -535,9 +569,9 @@ async def process_task(
                 progress=55,
                 message="正在生成观点 Embedding，未变化观点复用缓存",
             )
-            embedding_counts = await generate_embeddings(
+            embedding_counts = await checkpoint(session, task, "embeddings", lambda: generate_embeddings(
                 session, task.question, settings
-            )
+            ))
             if await _stop_if_cancelled(session, broker, task):
                 return
 
@@ -550,7 +584,7 @@ async def process_task(
                 task,
                 stage="clustering_claims",
                 progress=64,
-                message="正在进行余弦相似度粗聚类",
+                message="正在整理独立观点及其来源",
             )
             assert_task_transition(task.status, "refining_clusters")
             task.status = "refining_clusters"
@@ -563,9 +597,9 @@ async def process_task(
                 progress=70,
                 message="正在修正观点簇并识别共识、分歧和少数派",
             )
-            cluster_counts = await refine_clusters(
+            cluster_counts = await checkpoint(session, task, "clusters", lambda: refine_clusters(
                 session, task.question, settings, task=task
-            )
+            ))
             if await _stop_if_cancelled(session, broker, task):
                 return
 
@@ -580,9 +614,9 @@ async def process_task(
                 progress=78,
                 message="正在生成可追溯的观点地图",
             )
-            opinion = await generate_opinion_map(
+            opinion = await checkpoint(session, task, "opinion", lambda: generate_opinion_map(
                 session, task.question, settings, task=task
-            )
+            ), encode=lambda value: {"version": value.version}, decode=lambda value: SimpleNamespace(**value))
             if await _stop_if_cancelled(session, broker, task):
                 return
 
@@ -597,9 +631,17 @@ async def process_task(
                 progress=86,
                 message="正在生成总结文章和段落来源映射",
             )
-            draft, article = await generate_article(
-                session, task.question, settings, task=task
-            )
+            saved_article = (task.result or {}).get("checkpoints", {}).get("article")
+            if saved_article:
+                from backend.app.models.core import ArticleDraft
+                draft = await session.get(ArticleDraft, saved_article["draft_id"])
+                if draft is None:
+                    raise ValueError("已保存的草稿不存在，不能继续")
+                article = SimpleNamespace(content=draft.content)
+            else:
+                draft, article = await checkpoint(session, task, "article", lambda: generate_article(
+                    session, task.question, settings, task=task
+                ), encode=lambda value: {"draft_id": value[0].id})
             if await _stop_if_cancelled(session, broker, task):
                 return
 
@@ -614,19 +656,40 @@ async def process_task(
                 progress=94,
                 message="正在执行独立质量审核",
             )
-            review = await review_article(
+            from backend.app.schemas.analysis import ArticleQualityReview
+            review = await checkpoint(session, task, "review", lambda: review_article(
                 session, task.question, draft, settings, task=task
-            )
+            ), encode=lambda value: value.model_dump(), decode=ArticleQualityReview.model_validate)
+            if not review.passed:
+                correction = task.result.get("checkpoints", {}).get("article_correction")
+                if not correction:
+                    draft, article = await checkpoint(session, task, "article_correction", lambda: generate_article(
+                        session, task.question, settings, task=task, feedback=review.issues or [review.summary]
+                    ), encode=lambda value: {"draft_id": value[0].id, "version": value[0].current_version})
+                review = await checkpoint(session, task, "review_correction", lambda: review_article(
+                    session, task.question, draft, settings, task=task
+                ), encode=lambda value: value.model_dump(), decode=ArticleQualityReview.model_validate)
+                if not review.passed and draft.status != "review_approved":
+                    raise PipelinePaused("文章自动修正后仍有审核问题，请在草稿中修改并审核通过，再继续生成图片")
+            if task.payload.get("produce_images"):
+                if await _stop_if_cancelled(session, broker, task):
+                    return
+                from backend.app.services.production_images import produce_task_images
+                await produce_task_images(session, broker, task, draft, settings)
+                if await _stop_if_cancelled(session, broker, task):
+                    return
 
             assert_task_transition(task.status, "waiting_review")
             task.status = "waiting_review"
             task.stage = "waiting_review"
             task.progress = 100
             task.result = {
+                **(task.result or {}),
                 "draft_id": draft.id,
                 "fetch": fetch_counts,
                 "collector_mode": fetch_result.collector_mode,
                 "warnings": fetch_result.warnings,
+                "capture": fetch_result.capture,
                 "quality": quality_counts,
                 "claims": claim_counts,
                 "embeddings": embedding_counts,
@@ -646,6 +709,16 @@ async def process_task(
             )
             await session.commit()
             await publish_task_state(broker, task)
+        except (PipelinePaused, ImageResultUnknown) as exc:
+            await session.rollback()
+            task = await _load_task(session, task_id)
+            if task:
+                task.status = "image_result_unknown" if isinstance(exc, ImageResultUnknown) else "paused"
+                task.question.status = task.status
+                task.error_message = str(exc)
+                task.worker_id = None
+                await session.commit()
+                await publish_task_state(broker, task)
         except (ZhihuAuthenticationRequired, ZhihuVerificationRequired) as exc:
             await session.rollback()
             task = await _load_task(session, task_id)

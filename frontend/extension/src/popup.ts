@@ -10,7 +10,7 @@ const forgetButton = byId<HTMLButtonElement>("forget-button");
 
 async function refresh() {
   const stored = await chrome.storage.local.get(["workbenchUrl", "bridgeState", "lastBundle"]);
-  urlInput.value = String(stored.workbenchUrl || "http://127.0.0.1:8000");
+  urlInput.value = String(stored.workbenchUrl || "http://127.0.0.1:8002");
   const state = (stored.bridgeState || { connected: false, zhihuAuth: "unknown", message: "尚未配对" }) as BridgeState;
   byId("status-title").textContent = state.connected ? "扩展已连接" : "扩展未连接";
   byId("status-message").textContent = `${state.message} · 知乎：${state.zhihuAuth}`;

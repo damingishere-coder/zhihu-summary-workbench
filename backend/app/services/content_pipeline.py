@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import struct
 from collections import defaultdict
@@ -307,7 +308,7 @@ async def evaluate_answers(
             answers=[
                 {
                     "answer_id": item.id,
-                    "plain_content": item.plain_content[:12_000],
+                    "plain_content": item.plain_content,
                     "vote_count": item.vote_count,
                     "comment_count": item.comment_count,
                     "filter_reason": item.filter_reason,
@@ -395,6 +396,7 @@ async def extract_claims(
         (item.answer_id, item.content_hash): item for item in existing_claims
     }
     kept_ids: set[str] = set()
+    segments: dict[str, list[dict]] = defaultdict(list)
     batch_size = max(1, settings.claim_extraction_batch_size)
     for offset in range(0, len(answers), batch_size):
         batch = answers[offset : offset + batch_size]
@@ -403,7 +405,7 @@ async def extract_claims(
             answers=[
                 {
                     "answer_id": item.id,
-                    "plain_content": item.plain_content[:16_000],
+                    "plain_content": item.plain_content,
                 }
                 for item in batch
             ],
@@ -426,8 +428,9 @@ async def extract_claims(
             if not analysis:
                 analysis = AnswerAnalysis(answer_id=answer.id)
                 session.add(analysis)
-            analysis.summary = extracted.summary
-            analysis.structured_result = extracted.model_dump()
+            segments[answer.id].append(extracted.model_dump())
+            analysis.summary = "\n".join(item["summary"] for item in segments[answer.id])
+            analysis.structured_result = {**extracted.model_dump(), "segments": segments[answer.id]}
             analysis.quality_score = extracted.quality_score
             analysis.relevance_score = extracted.relevance_score
             for index, content in enumerate(extracted.core_claims):
@@ -440,6 +443,9 @@ async def extract_claims(
                 claim = reusable.get((answer.id, content_hash))
                 metadata = {
                     "claim_index": index,
+                    "source_start": extracted.source_start,
+                    "source_end": extracted.source_end or len(answer.plain_content),
+                    "source_hash": answer.content_hash,
                     "position": extracted.position,
                     "applicable_conditions": extracted.applicable_conditions,
                     "risks_or_limitations": extracted.risks_or_limitations,
@@ -457,6 +463,7 @@ async def extract_claims(
                     )
                     session.add(claim)
                     await session.flush()
+                    reusable[(answer.id, content_hash)] = claim
                 kept_ids.add(claim.id)
     for claim in existing_claims:
         if claim.id not in kept_ids:
@@ -596,7 +603,9 @@ async def refine_clusters(
             )
     if not rows:
         raise ValueError("没有可聚类的观点向量")
-    rough = _rough_cluster(rows, settings.cluster_similarity_threshold)
+    # One claim per input unit: a semantic model can separate contradictory claims.
+    # Character similarity must never force claims from opposite sides into one unit.
+    rough = [[row] for row in rows]
     rough_payload = [
         {
             "index": index,
@@ -608,16 +617,18 @@ async def refine_clusters(
         }
         for index, members in enumerate(rough)
     ]
-    result = await service.refine(
-        question_title=question.title, rough_clusters=rough_payload
-    )
-    await record_model_usage(
-        session,
-        result.usage,
-        question_id=question.id,
-        task_id=task.id if task else None,
-        stage="refining_clusters",
-    )
+    service.system_prompt += "\n输入每项为独立观点，可以合并或保持独立。每个索引必须且只能分配一次，不得漏掉少数派。source_relations 数组必须对每个 source_cluster_index 标明其相对本簇中心结论的 relation：supports/opposes/conditional/related；来源数不是支持票数。"
+    refined_items = []
+    for start in range(0, len(rough_payload), 64):
+        batch = rough_payload[start:start + 64]
+        result = await service.refine(question_title=question.title, rough_clusters=batch)
+        indexes = [index for item in result.data.clusters for index in item.source_cluster_indexes]
+        expected = {item["index"] for item in batch}
+        if set(indexes) != expected or len(indexes) != len(expected):
+            raise ValueError("聚类结果遗漏、重复或引用未知观点，已停止以保留来源")
+        refined_items.extend(result.data.clusters)
+        await record_model_usage(session, result.usage, question_id=question.id,
+                                 task_id=task.id if task else None, stage="refining_clusters")
     old_clusters = (
         await session.scalars(
             select(ClaimCluster).where(ClaimCluster.question_id == question.id)
@@ -634,7 +645,7 @@ async def refine_clusters(
             delete(ClaimCluster).where(ClaimCluster.id.in_(old_ids))
         )
     created = 0
-    for refined in result.data.clusters:
+    for refined in refined_items:
         selected = [
             rough_payload[index]
             for index in refined.source_cluster_indexes
@@ -652,13 +663,20 @@ async def refine_clusters(
                 answer_id for item in selected for answer_id in item["answer_ids"]
             )
         )
+        relations: dict[str, set[str]] = defaultdict(set)
+        relation_map = {row.source_cluster_index: row.relation for row in refined.source_relations}
+        for item in selected:
+            relation = relation_map.get(item["index"], "related")
+            for answer_id in item["answer_ids"]:
+                relations[answer_id].add(relation)
+        answer_relations = {key: next(iter(value)) if len(value) == 1 else "conditional" for key, value in relations.items()}
         cluster = ClaimCluster(
             question_id=question.id,
             name=refined.name,
             summary=refined.summary,
             cluster_type=refined.cluster_type,
             confidence=refined.confidence,
-            support_count=len(answer_ids),
+            support_count=sum(value == "supports" for value in answer_relations.values()),
             opposing_reasons=refined.opposing_reasons,
             applicable_conditions=refined.applicable_conditions,
             is_mainstream=refined.is_mainstream,
@@ -669,6 +687,8 @@ async def refine_clusters(
                 "claim_ids": claim_ids,
                 "sort_order": created,
                 "write_policy": "auto",
+                "source_count": len(answer_ids),
+                "opposition_count": sum(value == "opposes" for value in answer_relations.values()),
             },
         )
         session.add(cluster)
@@ -678,7 +698,7 @@ async def refine_clusters(
                 ClusterAnswerLink(
                     cluster_id=cluster.id,
                     answer_id=answer_id,
-                    relation="supports",
+                    relation=answer_relations[answer_id],
                 )
             )
         for claim in claims:
@@ -711,6 +731,8 @@ async def cluster_rows(
     ).all()
     result: list[dict[str, Any]] = []
     for cluster in clusters:
+        links = list((await session.scalars(select(ClusterAnswerLink).where(ClusterAnswerLink.cluster_id == cluster.id))).all())
+        source_relations = {link.answer_id: link.relation for link in links}
         answer_ids = (
             await session.scalars(
                 select(ClusterAnswerLink.answer_id).where(
@@ -741,6 +763,9 @@ async def cluster_rows(
                 "cluster_type": cluster.cluster_type,
                 "confidence": cluster.confidence,
                 "support_count": cluster.support_count,
+                "source_count": len(source_relations),
+                "opposition_count": sum(value == "opposes" for value in source_relations.values()),
+                "source_relations": source_relations,
                 "opposing_reasons": cluster.opposing_reasons or [],
                 "applicable_conditions": cluster.applicable_conditions or [],
                 "is_mainstream": cluster.is_mainstream,
@@ -901,6 +926,7 @@ async def generate_article(
     settings: Settings,
     *,
     task: TaskJob | None = None,
+    feedback: list[str] | None = None,
 ) -> tuple[ArticleDraft, ArticleGeneration]:
     opinion = await session.scalar(
         select(OpinionMap)
@@ -921,12 +947,23 @@ async def generate_article(
             item["sort_order"],
         )
     )
+    request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters,
+        "feedback": feedback, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
+        ensure_ascii=False, sort_keys=True).encode()).hexdigest()
+    if task:
+        existing = await session.scalar(select(ArticleVersion).where(ArticleVersion.source_task_id == task.id)
+            .order_by(ArticleVersion.created_at.desc()).limit(1))
+        if existing and existing.source_snapshot.get("request_hash") == request_hash:
+            saved_draft = await session.get(ArticleDraft, existing.draft_id)
+            if saved_draft.current_version != existing.version:
+                raise ValueError("草稿已有人工修改，请先审核当前版本，不能用旧任务覆盖")
+            return saved_draft, ArticleGeneration(title=existing.title, content=existing.content,
+                paragraphs=existing.source_snapshot["paragraphs"])
     provider, _ = await _runtime_provider(session, settings)
     result = await ArticleGenerationService(
         provider,
-        await get_active_prompt(
-            session, "article_generation", ARTICLE_SYSTEM_PROMPT
-        ),
+        await get_active_prompt(session, "article_generation", ARTICLE_SYSTEM_PROMPT)
+        + ("\n修正以下独立审核问题，仍只可使用已有来源：" + json.dumps(feedback, ensure_ascii=False) if feedback else ""),
     ).generate(
         question_title=question.title,
         opinion_map=opinion.content_json,
@@ -940,6 +977,17 @@ async def generate_article(
         task_id=task.id if task else None,
         stage="generating_article",
     )
+    capture = task.result.get("checkpoints", {}).get("fetch", {}).get("metadata", {}).get("capture", {}) if task else {}
+    if capture:
+        from backend.app.schemas.analysis import ArticleParagraph
+        count = capture.get("collected_answer_count", 0)
+        coverage = f"采集范围：本次读取并保存 {count} 条可访问回答。"
+        coverage += "已观察到页面末尾，仍可能存在不可访问或后续新增的回答。" if capture.get("reached_end") else "未确认读取全部回答，以下总结仅代表已采集样本。"
+        reason = {"time_budget": "达到 30 分钟采集预算", "no_progress": "页面未继续加载", "answer_limit": "达到采样数量"}.get(capture.get("stop_reason"))
+        if reason:
+            coverage += f"停止原因：{reason}。"
+        result.data.content += "\n\n> " + coverage
+        result.data.paragraphs.append(ArticleParagraph(paragraph_id="capture_scope", kind="disclosure", content=coverage))
     draft = await session.scalar(
         select(ArticleDraft)
         .where(ArticleDraft.question_id == question.id)
@@ -985,6 +1033,15 @@ async def generate_article(
         content=draft.content,
         source_task_id=task.id if task else None,
     )
+    snapshot_answers = list((await session.scalars(select(Answer).where(Answer.question_id == question.id))).all())
+    version.source_snapshot = {
+        "request_hash": request_hash,
+        "answers": {a.id: {"id": a.id, "author": a.author_name, "url": a.answer_url,
+                            "content": a.plain_content, "hash": a.content_hash} for a in snapshot_answers},
+        "clusters": clusters,
+        "paragraphs": [p.model_dump(mode="json") for p in result.data.paragraphs],
+        "capture": (task.result.get("checkpoints", {}).get("fetch", {}).get("metadata", {}).get("capture", {}) if task else {}),
+    }
     session.add(version)
     await session.flush()
     valid_answer_ids = set(
@@ -1096,6 +1153,23 @@ async def review_article(
         task_id=task.id if task else None,
         stage="reviewing_article",
     )
+    snapshot = version.source_snapshot or {}
+    known_answers = set(snapshot.get("answers", {}))
+    known_clusters = {item["id"] for item in snapshot.get("clusters", [])}
+    source_issues = []
+    for paragraph in snapshot.get("paragraphs", []):
+        if set(paragraph.get("source_answer_ids", [])) - known_answers or set(paragraph.get("cluster_ids", [])) - known_clusters:
+            source_issues.append("文章引用了不属于本次采集的来源")
+        disclosure = paragraph.get("kind") == "disclosure" and len(paragraph.get("content", "")) <= 200
+        if not paragraph.get("source_answer_ids") and not paragraph.get("cluster_ids") and not disclosure:
+            source_issues.append("文章段落缺少来源关联")
+        if paragraph.get("content") and paragraph["content"] not in draft.content and not snapshot.get("edited"):
+            source_issues.append("段落来源映射与文章正文不一致")
+    if source_issues:
+        result.data.passed = False
+        result.data.issues = list(dict.fromkeys(result.data.issues + source_issues))[:30]
+        result.data.checks["source_integrity"] = False
+    result.data.requires_human_review = True
     draft.review_result = result.data.model_dump()
     draft.reviewed_at = utc_now()
     draft.status = "waiting_review"

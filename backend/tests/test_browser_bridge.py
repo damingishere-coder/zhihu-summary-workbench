@@ -10,11 +10,12 @@ from backend.app.db.session import get_session_factory
 from backend.app.models.browser_bridge import BrowserBridgeClient, CollectionJob
 from backend.app.models.content import Answer, Claim, ClaimCluster, OpinionMap
 from backend.app.models.core import ArticleDraft, ModelUsageLog
-from backend.app.schemas.browser_bridge import ImportBundleV1
+from backend.app.schemas.browser_bridge import CollectionBundleV2, ImportBundleV1
 from backend.app.services.browser_bridge import (
     bridge_manager,
     bundle_to_fetch_result,
     complete_collection_job,
+    fail_collection_job,
 )
 from backend.app.services.tasks import process_task
 from backend.app.api.routes.browser_bridge import bridge_origin_allowed
@@ -52,6 +53,22 @@ def sample_bundle(question_id: str, *, count: int = 5) -> dict[str, object]:
         ],
         "warnings": [],
     }
+
+
+def sample_v2_bundle(question_id: str, *, count: int = 5) -> dict[str, object]:
+    bundle = sample_bundle(question_id, count=count)
+    bundle["format"] = "CollectionBundleV2"
+    bundle["version"] = 2
+    bundle["capture"] = {
+        "method": "rendered_dom",
+        "page_url": f"https://www.zhihu.com/question/{question_id}",
+        "visible_answer_count": count + 2,
+        "collected_answer_count": count,
+        "diagnostics": [
+            {"code": "dom_capture", "level": "info", "message": "DOM fixture"}
+        ],
+    }
+    return bundle
 
 
 def test_websocket_origin_is_limited_to_extension_and_loopback() -> None:
@@ -146,6 +163,20 @@ def test_import_bundle_rejects_duplicates_and_cross_question_answers() -> None:
     wrong_question["answers"][0]["question_id"] = "87654321"
     with pytest.raises(ValueError, match="不一致"):
         ImportBundleV1.model_validate(wrong_question)
+
+
+def test_collection_bundle_v2_validates_capture_counts() -> None:
+    bundle = CollectionBundleV2.model_validate(sample_v2_bundle("12345678", count=2))
+    assert bundle.capture.method == "rendered_dom"
+    assert bundle.capture.visible_answer_count == 4
+    mismatched = sample_v2_bundle("12345678", count=2)
+    mismatched["capture"]["collected_answer_count"] = 1
+    with pytest.raises(ValueError, match="采集统计"):
+        CollectionBundleV2.model_validate(mismatched)
+    external_page = sample_v2_bundle("12345678", count=1)
+    external_page["capture"]["page_url"] = "javascript:alert(1)"
+    with pytest.raises(ValueError, match="知乎 HTTPS"):
+        CollectionBundleV2.model_validate(external_page)
 
 
 @pytest.mark.asyncio
@@ -251,19 +282,46 @@ async def test_simulated_extension_completion_reaches_waiting_review(app_client)
             status="paired",
             extension_version="0.1.0",
         )
-        session.add(bridge_client)
+        other_client = BrowserBridgeClient(
+            token_hash="c" * 64,
+            status="paired",
+            extension_version="0.2.0",
+        )
+        session.add_all([bridge_client, other_client])
+        await session.flush()
+        job.client_id = bridge_client.id
+        job.status = "dispatched"
         await session.commit()
         client_id = bridge_client.id
+        other_client_id = other_client.id
         job_id = job.id
         nonce = job.nonce
 
+    with pytest.raises(ValueError, match="nonce"):
+        await complete_collection_job(
+            get_session_factory(),
+            broker,
+            client_id=client_id,
+            job_id=job_id,
+            nonce="wrong-nonce",
+            bundle_payload=sample_v2_bundle("58173613"),
+        )
+    with pytest.raises(ValueError, match="不是该采集任务"):
+        await complete_collection_job(
+            get_session_factory(),
+            broker,
+            client_id=other_client_id,
+            job_id=job_id,
+            nonce=nonce,
+            bundle_payload=sample_v2_bundle("58173613"),
+        )
     result = await complete_collection_job(
         get_session_factory(),
         broker,
         client_id=client_id,
         job_id=job_id,
         nonce=nonce,
-        bundle_payload=sample_bundle("58173613"),
+        bundle_payload=sample_v2_bundle("58173613"),
     )
     assert result == "completed"
     duplicate = await complete_collection_job(
@@ -272,7 +330,7 @@ async def test_simulated_extension_completion_reaches_waiting_review(app_client)
         client_id=client_id,
         job_id=job_id,
         nonce=nonce,
-        bundle_payload=sample_bundle("58173613"),
+        bundle_payload=sample_v2_bundle("58173613"),
     )
     assert duplicate == "duplicate"
     assert await broker.dequeue(timeout=1) == task_id
@@ -288,6 +346,17 @@ async def test_simulated_extension_completion_reaches_waiting_review(app_client)
     completed = await client.get(f"/api/tasks/{task_id}")
     assert completed.json()["status"] == "waiting_review"
     assert completed.json()["result"]["collector_mode"] == "chrome_extension"
+    assert completed.json()["result"]["capture"] == {
+        "method": "rendered_dom",
+        "page_url": "https://www.zhihu.com/question/58173613",
+        "visible_answer_count": 7,
+        "collected_answer_count": 5,
+        "diagnostics": [
+            {"code": "dom_capture", "level": "info", "message": "DOM fixture"}
+        ],
+        "version": 2,
+        "stop_reason": "", "elapsed_seconds": 0.0, "reached_end": False,
+    }
     async with get_session_factory()() as session:
         assert await session.scalar(select(func.count(Answer.id))) == 5
         assert await session.scalar(select(func.count(Claim.id))) > 0
@@ -295,3 +364,90 @@ async def test_simulated_extension_completion_reaches_waiting_review(app_client)
         assert await session.scalar(select(func.count(OpinionMap.id))) == 1
         assert await session.scalar(select(func.count(ArticleDraft.id))) == 1
         assert await session.scalar(select(func.count(ModelUsageLog.id))) > 0
+        persisted_job = await session.get(CollectionJob, job_id)
+        assert persisted_job.capture_version == 2
+        assert persisted_job.capture_method == "rendered_dom"
+        assert persisted_job.visible_answer_count == 7
+        assert persisted_job.collected_answer_count == 5
+
+
+@pytest.mark.asyncio
+async def test_failed_dom_capture_persists_diagnostics_without_retry(app_client) -> None:
+    _, client, broker = app_client
+    question_id = (
+        await client.post(
+            "/api/questions/manual",
+            json={"url": "https://www.zhihu.com/question/44556677", "title": "DOM 变化测试"},
+        )
+    ).json()["id"]
+    task_id = (await client.post(f"/api/questions/{question_id}/queue")).json()["id"]
+    assert await broker.dequeue(timeout=1) == task_id
+    await process_task(
+        task_id,
+        worker_id="dom-failure-worker",
+        settings=get_settings(),
+        broker=broker,
+        session_factory=get_session_factory(),
+    )
+    async with get_session_factory()() as session:
+        job = await session.scalar(select(CollectionJob).where(CollectionJob.task_id == task_id))
+        bridge_client = BrowserBridgeClient(
+            token_hash="b" * 64,
+            status="paired",
+            extension_version="0.2.0",
+        )
+        session.add(bridge_client)
+        await session.commit()
+        job_id = job.id
+        nonce = job.nonce
+        client_id = bridge_client.id
+    await fail_collection_job(
+        get_session_factory(),
+        broker,
+        client_id=client_id,
+        job_id=job_id,
+        nonce=nonce,
+        message="未识别回答结构",
+        capture={
+            "method": "rendered_dom",
+            "page_url": "https://www.zhihu.com/question/44556677",
+            "visible_answer_count": 2,
+            "collected_answer_count": 0,
+            "diagnostics": [
+                {
+                    "code": "answer_structure_changed",
+                    "level": "error",
+                    "message": "页面结构发生变化",
+                }
+            ],
+        },
+    )
+    detail = (await client.get(f"/api/tasks/{task_id}")).json()
+    assert detail["status"] == "waiting_browser"
+    assert detail["retry_count"] == 0
+    assert detail["result"]["capture"]["recommended_action"] == (
+        "retry_visible_page_or_import_json"
+    )
+    async with get_session_factory()() as session:
+        job = await session.get(CollectionJob, job_id)
+        assert job.status == "failed"
+        assert job.capture_method == "rendered_dom"
+        assert job.capture_diagnostics_json[0]["code"] == "answer_structure_changed"
+    bridge_status = (await client.get("/api/settings/browser/bridge")).json()
+    assert bridge_status["latest_capture"] == {
+        "job_id": job_id,
+        "status": "failed",
+        "source": "extension",
+        "capture_version": 2,
+        "capture_method": "rendered_dom",
+        "page_url": "https://www.zhihu.com/question/44556677",
+        "visible_answer_count": 2,
+        "collected_answer_count": 0,
+        "diagnostics": [
+            {
+                "code": "answer_structure_changed",
+                "level": "error",
+                "message": "页面结构发生变化",
+            }
+        ],
+    }

@@ -384,7 +384,7 @@ async def generate_prompt_version(
         background_path=current.background_path,
         thumbnail_path=current.thumbnail_path,
         workflow_mode="copy_prompt_and_upload",
-        copy_state={},
+        copy_state={"article_version": draft.current_version},
         uploaded_name=current.uploaded_name,
         content_type=current.content_type,
         byte_size=current.byte_size,
