@@ -158,7 +158,7 @@ def build_infographic_html(
 html, body {{ margin: 0; width: 100%; height: 100%; }}
 body {{
   color: #172033;
-  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  font-family: "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", sans-serif;
   font-size: calc(26px * {font_scale});
   background: #f5f7fa;
 }}

@@ -227,6 +227,7 @@ async def test_json_import_is_labeled_and_resumes_waiting_task(app_client) -> No
 async def test_health_reports_latest_uncached_real_model_usage(app_client) -> None:
     _, client, _ = app_client
     async with get_session_factory()() as session:
+        session.add(BrowserBridgeClient(token_hash="a" * 64, zhihu_auth="authenticated"))
         session.add(
             ModelUsageLog(
                 provider="codex",
@@ -241,6 +242,8 @@ async def test_health_reports_latest_uncached_real_model_usage(app_client) -> No
 
     response = await client.get("/api/health")
     assert response.status_code == 200
+    assert response.json()["browser_bridge"]["connection"] == "disconnected"
+    assert response.json()["browser_bridge"]["zhihu_auth"] == "unknown"
     assert response.json()["model"]["last_real_validation"] == {
         "provider": "codex",
         "model": "gpt-5.6-sol",

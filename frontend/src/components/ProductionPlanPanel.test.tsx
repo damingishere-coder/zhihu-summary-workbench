@@ -7,7 +7,14 @@ import { api } from "../api/client";
 import { ProductionPlanPanel } from "./ProductionPlanPanel";
 
 test("opening the dashboard only queries; execution and pause require clicks", async () => {
-  const today = vi.spyOn(api, "todayPlan").mockResolvedValue({ question_limit: 10, status: "pending", result: { items: [], completed: 0 } } as Awaited<ReturnType<typeof api.todayPlan>>);
+  const today = vi.spyOn(api, "todayPlan").mockResolvedValue({
+    id: "manual-plan", plan_date: "2026-09-07", question_limit: 10,
+    hot_quota: 6, manual_quota: 4, status: "pending", execute_time: "09:00",
+    max_concurrency: 1, max_answers: 500, daily_publish_limit: 10,
+    publish_interval_minutes: 30, auto_production: false, auto_publish: false,
+    last_executed_at: null, result: { items: [], completed: 0 },
+    created_at: "2026-09-07T00:00:00", updated_at: "2026-09-07T00:00:00",
+  });
   const run = vi.spyOn(api, "runTodayPlan").mockResolvedValue({ message: "已执行", queued_task_ids: [], plan: await api.todayPlan() });
   const pause = vi.spyOn(api, "pauseTodayPlan").mockResolvedValue({ message: "已暂停" });
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });

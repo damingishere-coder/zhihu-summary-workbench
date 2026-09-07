@@ -145,7 +145,9 @@ async def test_mock_pipeline_produces_rendered_package_and_rejects_stale_article
     await process_task(info["id"], worker_id="test", settings=get_settings(), broker=broker,
                        session_factory=get_session_factory(), collector=FakeZhihuCollector())
     task = (await client.get(f"/api/tasks/{info['id']}")).json()
-    assert task["status"] == "waiting_review", task.get("error_message")
+    async with get_session_factory()() as session:
+        render_diagnostics = [row.overflow_json for row in (await session.scalars(select(ImageVersion))).all()]
+    assert task["status"] == "waiting_review", (task.get("error_message"), render_diagnostics)
     assert task["result"]["images_complete"]
     draft_id = task["result"]["draft_id"]
     assert (await client.post(f"/api/drafts/{draft_id}/approve")).status_code == 200
