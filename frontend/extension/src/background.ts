@@ -1,4 +1,5 @@
 import { collectHotInPage } from "./hot-collector";
+import { inspectZhihuAuth } from "./auth";
 import { collectInPage, type CollectRequest } from "./collector";
 import { PROTOCOL_VERSION, randomNonce, websocketUrl, type BridgeState } from "./protocol";
 
@@ -43,7 +44,7 @@ async function connect() {
     socket.onopen = () => {
       reconnectAttempt = 0;
       send({ type: "hello", job_id: null, nonce: randomNonce(), extension_version: chrome.runtime.getManifest().version, token: config.token, pairing_code: config.pairingCode });
-      void updateState({ connected: true, message: "扩展桥接已连接" });
+      void updateState({ connected: false, message: "正在等待工作台确认连接" });
       if (heartbeat !== null) clearInterval(heartbeat);
       heartbeat = setInterval(() => void checkAuth(), 20_000) as unknown as number;
     };
@@ -108,7 +109,7 @@ async function handleServerMessage(message: Record<string, unknown>) {
     await checkAuth();
     return;
   }
-  if (message.type === "hello_ack") { await checkAuth(); return; }
+  if (message.type === "hello_ack") { await updateState({ connected: true, message: "工作台已确认连接" }); await checkAuth(); return; }
   if (message.type === "batch_ack") {
     acknowledgements.get(String(message.batch_id))?.(message.result as Record<string, unknown>);
     return;
@@ -205,18 +206,7 @@ async function checkAuth() {
     return;
   }
   const [execution] = await chrome.scripting.executeScript({
-    target: { tabId: tab.id }, world: "MAIN", func: () => {
-      const path = window.location.pathname.toLowerCase();
-      const text = (document.body?.innerText || document.body?.textContent || "").replace(/\s+/g, " ").slice(0, 100_000);
-      if (path.startsWith("/signin") || path.startsWith("/account/login")) return "login_required";
-      if (
-        ["当前请求存在异常", "请完成安全验证", "暂时限制访问", "验证后继续访问"].some((value) => text.includes(value))
-        || document.querySelector("[class*='Captcha']:not([class*='Login']), [class*='Verification'], iframe[src*='captcha']")
-      ) return "verification_required";
-      if (document.querySelector(".AppHeader-profile, .AppHeader-userInfo .Avatar")) return "authenticated";
-      if (document.querySelector(".SignFlow, .SignFlowHomepage")) return "login_required";
-      return "unknown";
-    },
+    target: { tabId: tab.id }, world: "MAIN", func: inspectZhihuAuth,
   });
   const auth = String(execution?.result ?? "unknown") as BridgeState["zhihuAuth"];
   await updateState({ zhihuAuth: auth, message: auth === "authenticated" ? "知乎实时登录状态正常" : "请在正常知乎标签页完成登录或验证" });
@@ -228,7 +218,7 @@ chrome.runtime.onStartup.addListener(() => void connect());
 chrome.alarms.onAlarm.addListener((alarm) => { if (alarm.name === "bridge-reconnect") void connect(); });
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message?.type === "connect") void connect().then(() => respond({ ok: true }));
-  else if (message?.type === "check_auth") void checkAuth().then(() => respond({ ok: true }));
+  else if (message?.type === "check_auth") void checkAuth().then(() => respond({ ok: true })).catch((error) => respond({ ok: false, error: error instanceof Error ? error.message : "登录检查失败，请刷新知乎页面后重试" }));
   else if (message?.type === "status") void chrome.storage.local.get(["bridgeState", "lastBundle"]).then(respond);
   else return false;
   return true;
