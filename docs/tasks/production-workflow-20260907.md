@@ -15,11 +15,16 @@
 - [ ] 真实扩展采集门槛
 - [ ] 三篇真实文章图片闭环
 - [ ] 十题批量验收
-- [ ] 提交、Push、PR、CI；合并等待用户确认
+- [x] 提交、Push、草稿 PR #3；合并等待用户确认
+- [x] GitHub CI：功能提交 d372270 的后端、前端全部通过（run 34080402738）；文档收尾提交以 PR 最新检查为准
 
 本次开始时已有 22 个修改文件与 3 个未跟踪文件；已保存原始 diff 和未跟踪文件副本到 ignored artifacts 目录。当前分支：codex/zhihu-production-workflow-20260907。
 
 运行验证：8002 API 与 4173 代理返回本项目 health；迁移 0007 成功，原库已备份。启动前后为 1 任务、5 回答、1 文章版本、0 图片版本、7 模型调用，均未增加。
+
+RunDock 实测进程链为 rundock.exe → alter.exe → 本项目 Python / npm → 8002 / 4173 监听进程。验证后已停止本项目，两组件均为 stopped、PID 为空，两个端口无监听；自动重启和定时启动关闭。下次由用户在 RunDock 手动开启。
+
+草稿 PR：https://github.com/damingishere-coder/zhihu-summary-workbench/pull/3，基于已有工作台分支 feature/zhihu-summary-workbench。首次 CI 暴露了新增前端测试类型不完整与 Linux 中文标题行高不足，已针对证据修复并保留溢出阻断。
 
 测试：后端 81，前端 18+1，扩展 9，Sites 契约 4；构建通过。生图真实 smoke 已完成，但它不是三篇业务文章闭环验收。
 
