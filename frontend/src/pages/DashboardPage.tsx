@@ -1,174 +1,212 @@
-import {
-  App,
-  Button,
-  Input,
-  Select,
-  Space,
-  Table,
-} from "antd";
-import { SearchOutlined, UnorderedListOutlined } from "@ant-design/icons";
+import { ArrowRightOutlined, CheckCircleOutlined } from "@ant-design/icons";
 import { useQuery } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Collapse } from "antd";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { ActivityRail } from "../components/ActivityRail";
+import { allDrafts, allTasks } from "../api/collections";
 import { InfrastructureHealth } from "../components/InfrastructureHealth";
-import { MetricStrip } from "../components/MetricStrip";
 import { ProductionPlanPanel } from "../components/ProductionPlanPanel";
 import { PageHeader } from "../components/PageHeader";
-import { ProgressCell } from "../components/ProgressCell";
-import {
-  AddQuestionButton,
-  AddQuestionModal,
-  ImportQuestionsButton,
-  ImportQuestionsModal,
-} from "../components/QuestionModals";
+import { SectionNav } from "../components/SectionNav";
 import { ErrorState, LoadingBlock } from "../components/StateViews";
 import { StatusTag } from "../components/StatusTag";
+import {
+  attentionStatuses,
+  runningStatuses,
+  taskAction,
+} from "../utils/taskActions";
+import { formatDateTime } from "../utils/format";
 import type { Task } from "../types";
-import { formatDateTime, truncateId } from "../utils/format";
+
+function TaskRows({ tasks }: { tasks: Task[] }) {
+  return (
+    <div className="action-list">
+      {tasks.map((task) => {
+        const action = taskAction(task);
+        return (
+          <div className="action-row" key={task.id}>
+            <div>
+              <Link className="action-title" to={action.href}>
+                {task.question_title}
+              </Link>
+              <p>
+                {task.error_message || (
+                  <>
+                    <StatusTag status={task.stage} /> {task.progress}%
+                  </>
+                )}
+              </p>
+            </div>
+            <Link className="quiet-link" to={action.href}>
+              {action.label} <ArrowRightOutlined />
+            </Link>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
 
 export function DashboardPage() {
-  const navigate = useNavigate();
-  const [addOpen, setAddOpen] = useState(false);
-  const [importOpen, setImportOpen] = useState(false);
-  const [search, setSearch] = useState("");
-  const [status, setStatus] = useState("");
-  const query = useQuery({
+  const summary = useQuery({
     queryKey: ["dashboard"],
     queryFn: api.dashboard,
-    refetchInterval: 15_000,
+    refetchInterval: 15000,
   });
-  const filtered = useMemo(
-    () =>
-      (query.data?.recent_tasks ?? []).filter(
-        (task) =>
-          (!status || task.status === status) &&
-          (!search || task.question_title.toLowerCase().includes(search.toLowerCase())),
-      ),
-    [query.data?.recent_tasks, search, status],
-  );
-  const columns = [
-    {
-      title: "问题标题",
-      dataIndex: "question_title",
-      key: "question_title",
-      ellipsis: true,
-      render: (value: string, task: Task) => (
-        <button className="table-link table-title" onClick={() => navigate(`/questions/${task.question_id}`)}>
-          <span>{value}</span>
-          <small>ID: {truncateId(task.question_id)}</small>
-        </button>
-      ),
-    },
-    {
-      title: "当前阶段",
-      dataIndex: "stage",
-      key: "stage",
-      width: 130,
-      render: (value: string) => <StatusTag status={value} />,
-    },
-    {
-      title: "进度",
-      dataIndex: "progress",
-      key: "progress",
-      width: 130,
-      render: (value: number) => <ProgressCell progress={value} />,
-    },
-    {
-      title: "Worker",
-      dataIndex: "worker_id",
-      key: "worker_id",
-      width: 130,
-      responsive: ["xl" as const],
-      render: (value: string | null) => value || "未分配",
-    },
-    {
-      title: "更新时间",
-      dataIndex: "updated_at",
-      key: "updated_at",
-      width: 92,
-      render: (value: string) => formatDateTime(value),
-    },
-    {
-      title: "状态",
-      dataIndex: "status",
-      key: "status",
-      width: 100,
-      render: (value: string) => <StatusTag status={value} />,
-    },
-  ];
-
+  const tasks = useQuery({
+    queryKey: ["tasks", "all"],
+    queryFn: () => allTasks(),
+    refetchInterval: 15000,
+  });
+  const drafts = useQuery({ queryKey: ["drafts", "all"], queryFn: allDrafts });
+  const attention =
+    tasks.data?.items.filter((task) =>
+      attentionStatuses.includes(task.status),
+    ) ?? [];
+  const running =
+    tasks.data?.items.filter((task) => runningStatuses.includes(task.status)) ??
+    [];
+  const waiting =
+    drafts.data?.items.filter((draft) => draft.status !== "review_approved") ??
+    [];
+  const healthy =
+    summary.data &&
+    summary.data.queue.connected &&
+    summary.data.workers.some((worker) => !worker.stale) &&
+    summary.data.health.model === "可用" &&
+    summary.data.health.database === "正常";
   return (
     <div className="page page--dashboard">
       <PageHeader
-        title="仪表盘"
-        description="今天的任务、基础设施和模型状态都在这里。"
+        eyebrow={new Date().toLocaleDateString("zh-CN", {
+          month: "long",
+          day: "numeric",
+          weekday: "long",
+        })}
+        title="今天"
         actions={
-          <Space wrap>
-            <AddQuestionButton onClick={() => setAddOpen(true)} />
-            <ImportQuestionsButton onClick={() => setImportOpen(true)} />
-            <Button icon={<UnorderedListOutlined />} onClick={() => navigate("/tasks")}>
-              查看全部任务
-            </Button>
-          </Space>
+          <Link className="quiet-link" to="/questions">
+            添加选题 <ArrowRightOutlined />
+          </Link>
         }
       />
+      <SectionNav section="today" />
       <ProductionPlanPanel />
-      {query.isLoading && <LoadingBlock rows={12} />}
-      {query.isError && <ErrorState error={query.error} onRetry={() => void query.refetch()} />}
-      {query.data && (
-        <div className="dashboard-workbench">
-          <div className="dashboard-main">
-            <MetricStrip metrics={query.data.metrics} />
-            <InfrastructureHealth summary={query.data} />
-            <section className="work-surface">
-              <div className="table-toolbar">
-                <Select
-                  value={status}
-                  onChange={setStatus}
-                  aria-label="任务状态"
-                  options={[
-                    { value: "", label: "状态：全部" },
-                    { value: "queued", label: "队列中" },
-                    { value: "fetching_answers", label: "采集回答" },
-                    { value: "extracting_claims", label: "观点提取" },
-                    { value: "generating_article", label: "生成文章" },
-                    { value: "waiting_review", label: "待审核" },
-                    { value: "failed", label: "失败" },
-                  ]}
-                />
-                <Input
-                  value={search}
-                  onChange={(event) => setSearch(event.target.value)}
-                  prefix={<SearchOutlined />}
-                  allowClear
-                  placeholder="搜索问题标题"
-                  className="table-search"
-                />
+      <div className="section-heading">
+        <div>
+          <h2>接下来，处理这些</h2>
+          <p>包含之前未完成的任务与作品</p>
+        </div>
+        <Link to="/drafts">
+          全部作品 <ArrowRightOutlined />
+        </Link>
+      </div>
+      {(tasks.isLoading || drafts.isLoading) && <LoadingBlock rows={4} />}
+      {tasks.isError && (
+        <ErrorState error={tasks.error} onRetry={() => void tasks.refetch()} />
+      )}
+      {drafts.isError && (
+        <ErrorState
+          error={drafts.error}
+          onRetry={() => void drafts.refetch()}
+        />
+      )}
+      {attention.length > 0 && (
+        <section className="work-surface action-section">
+          <h3>
+            需要你处理 <span>{attention.length}</span>
+          </h3>
+          <TaskRows tasks={attention.slice(0, 5)} />
+          {attention.length > 5 && <Link to="/tasks">查看全部待处理任务</Link>}
+        </section>
+      )}
+      {waiting.length > 0 && (
+        <section className="work-surface action-section">
+          <h3>
+            等待检查的作品 <span>{waiting.length}</span>
+          </h3>
+          <div className="action-list">
+            {waiting.slice(0, 5).map((draft) => (
+              <div className="action-row" key={draft.id}>
+                <div>
+                  <Link
+                    className="action-title"
+                    to={`/drafts/${draft.id}/review`}
+                  >
+                    {draft.title}
+                  </Link>
+                  <p>
+                    文章 v{draft.current_version} ·{" "}
+                    {formatDateTime(draft.updated_at, true)}
+                  </p>
+                </div>
+                <Link
+                  className="primary-link"
+                  to={`/drafts/${draft.id}/review`}
+                >
+                  检查作品 <ArrowRightOutlined />
+                </Link>
               </div>
-              <Table<Task>
-                rowKey="id"
-                size="middle"
-                columns={columns}
-                dataSource={filtered}
-                pagination={{ pageSize: 8, hideOnSinglePage: true }}
-                locale={{ emptyText: "还没有任务。添加问题并加入任务后会显示在这里。" }}
-                onRow={(record) => ({
-                  onDoubleClick: () => navigate(`/questions/${record.question_id}`),
-                })}
-              />
-            </section>
+            ))}
           </div>
-          <ActivityRail logs={query.data.recent_logs} />
+          {waiting.length > 5 && <Link to="/drafts">查看全部待检查作品</Link>}
+        </section>
+      )}
+      {tasks.data && drafts.data && !attention.length && !waiting.length && (
+        <div className="calm-empty">
+          <CheckCircleOutlined />
+          <h3>暂时没有需要处理的内容</h3>
+          <p>
+            {running.length
+              ? "作品正在生成，完成后会出现在这里。"
+              : "开始今日计划，或先去选题里添加一个问题。"}
+          </p>
         </div>
       )}
-      <AddQuestionModal
-        open={addOpen}
-        onClose={() => setAddOpen(false)}
-        onCreated={(id) => navigate(`/questions/${id}`)}
-      />
-      <ImportQuestionsModal open={importOpen} onClose={() => setImportOpen(false)} />
+      {running.length > 0 && (
+        <section className="work-surface action-section">
+          <h3>
+            正在生成 <span>{running.length}</span>
+          </h3>
+          <TaskRows tasks={running.slice(0, 5)} />
+          {running.length > 5 && <Link to="/tasks">查看全部运行任务</Link>}
+        </section>
+      )}
+      {summary.isError && (
+        <ErrorState
+          error={summary.error}
+          onRetry={() => void summary.refetch()}
+        />
+      )}
+      {summary.data && (
+        <Collapse
+          className="system-details"
+          ghost
+          items={[
+            {
+              key: "system",
+              label: healthy
+                ? "服务已就绪 · 查看运行详情"
+                : "服务需要检查 · 查看运行详情",
+              children: (
+                <>
+                  <InfrastructureHealth summary={summary.data} />
+                  <h3>最近动态</h3>
+                  <ul className="compact-logs">
+                    {summary.data.recent_logs.map((log) => (
+                      <li key={log.id}>
+                        <time>{formatDateTime(log.created_at)}</time>
+                        {log.message}
+                      </li>
+                    ))}
+                  </ul>
+                  <Link to="/tasks">完整任务记录</Link>
+                </>
+              ),
+            },
+          ]}
+        />
+      )}
     </div>
   );
 }

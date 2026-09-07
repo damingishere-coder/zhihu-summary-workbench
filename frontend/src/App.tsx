@@ -2,8 +2,9 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { App as AntApp, ConfigProvider } from "antd";
 import zhCN from "antd/locale/zh_CN";
 import { useEffect, useMemo, useState } from "react";
-import { BrowserRouter } from "react-router-dom";
-import { AppRoutes } from "./app/routes";
+import { createBrowserRouter, RouterProvider } from "react-router-dom";
+import { appRoutes } from "./app/routes";
+
 import {
   createTheme,
   readThemePreference,
@@ -11,6 +12,8 @@ import {
   type ThemeMode,
 } from "./app/theme";
 import { ThemeModeContext } from "./contexts/ThemeModeContext";
+
+const router = createBrowserRouter(appRoutes);
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -45,9 +48,7 @@ export function App() {
       <AntApp>
         <QueryClientProvider client={queryClient}>
           <ThemeModeContext.Provider value={context}>
-            <BrowserRouter>
-              <AppRoutes />
-            </BrowserRouter>
+            <RouterProvider router={router} />
           </ThemeModeContext.Provider>
         </QueryClientProvider>
       </AntApp>

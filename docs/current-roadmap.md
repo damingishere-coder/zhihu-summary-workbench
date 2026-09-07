@@ -2,7 +2,7 @@
 
 更新时间：2026-09-07
 
-当前任务分支：`codex/zhihu-production-workflow-20260907`。本文件记录当前状态，旧 phase 文档保留为历史快照。
+内容流水线基线分支：`codex/zhihu-production-workflow-20260907`。2026-09-08 UI 改版使用独立分支 `codex/zhihu-creative-ui-20260907`，页面变化与验证边界见 [UI 改版记录](ui-redesign.md)。本文件记录当前状态，旧 phase 文档保留为历史快照。
 
 ## 本次实现
 

@@ -92,7 +92,7 @@ export function PromptsPage() {
 
   return (
     <div className="page">
-      <PageHeader title="Prompt 管理" description="每次修改都创建新版本；可测试、切换活动版本、回滚并保留审计记录。" />
+      <PageHeader title="提示词管理" description="每次修改都创建新版本；可测试、切换活动版本、回滚并保留审计记录。" />
       <Alert className="phase-alert" type="info" showIcon title="Prompt 不会原地覆盖" description="保存只会新增版本。流水线每次调用都会读取当前活动版本，回滚也只切换活动指针。" />
       {prompts.isLoading && <LoadingBlock rows={12} />}
       {prompts.isError && <ErrorState error={prompts.error} onRetry={() => void prompts.refetch()} />}

@@ -18,20 +18,20 @@ export function createTheme(mode: ThemeMode): ThemeConfig {
   return {
     algorithm: dark ? theme.darkAlgorithm : theme.defaultAlgorithm,
     token: {
-      colorPrimary: dark ? "#5B9CFF" : "#1769E0",
+      colorPrimary: dark ? "#5B9CFF" : "#3264D6",
       colorSuccess: dark ? "#45C49B" : "#15805D",
       colorWarning: dark ? "#F0A451" : "#C76B16",
       colorError: dark ? "#FF6B64" : "#D92D20",
-      colorText: dark ? "#F2F5F9" : "#172033",
+      colorText: dark ? "#F2F5F9" : "#202532",
       colorTextSecondary: dark ? "#A6B1C2" : "#667085",
-      colorBgLayout: dark ? "#0F1724" : "#F6F8FB",
+      colorBgLayout: dark ? "#0F1724" : "#F5F6F8",
       colorBgContainer: dark ? "#151F2E" : "#FFFFFF",
-      colorBorder: dark ? "#2A394D" : "#DCE3EC",
-      borderRadius: 6,
+      colorBorder: dark ? "#2A394D" : "#E5E8EE",
+      borderRadius: 8,
       fontFamily:
         'Inter, "Microsoft YaHei UI", "Microsoft YaHei", "PingFang SC", sans-serif',
-      fontSize: 14,
-      controlHeight: 36,
+      fontSize: 16,
+      controlHeight: 40,
     },
     components: {
       Table: {
@@ -48,7 +48,7 @@ export function createTheme(mode: ThemeMode): ThemeConfig {
       },
       Layout: {
         siderBg: dark ? "#151F2E" : "#FFFFFF",
-        bodyBg: dark ? "#0F1724" : "#F6F8FB",
+        bodyBg: dark ? "#0F1724" : "#F5F6F8",
         headerBg: dark ? "#151F2E" : "#FFFFFF",
       },
     },
