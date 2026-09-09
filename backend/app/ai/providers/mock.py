@@ -124,6 +124,19 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
         self, output_schema: type[T], user_prompt: str
     ) -> BaseModel:
         payload = self._input_payload(user_prompt)
+        from backend.app.services.survey_stances import SurveyStanceMatrix
+        if output_schema is SurveyStanceMatrix:
+            directions = payload.get("directions", [])
+            items = []
+            for answer in payload.get("answers", []):
+                content = str(answer["content"])
+                # Deterministic demo behavior: only literal direction matches count.
+                matches = [str(d["viewpoint"]) in content for d in directions]
+                items.append({"answer_id": answer["id"],
+                    "relations": ["supports" if match else "not_mentioned" for match in matches],
+                    "evidence": [str(d["viewpoint"])[:300] if match else ""
+                        for d, match in zip(directions, matches, strict=True)]})
+            return SurveyStanceMatrix.model_validate({"answers": items})
         if output_schema is AnswerQualityBatch:
             items: list[AnswerQualityItem] = []
             for answer in payload.get("answers", []):

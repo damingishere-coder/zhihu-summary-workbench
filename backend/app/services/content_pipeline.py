@@ -763,6 +763,8 @@ async def cluster_rows(
                 "source_count": len(source_relations),
                 "opposition_count": sum(value == "opposes" for value in source_relations.values()),
                 "source_relations": source_relations,
+                "source_evidence_quotes": metadata.get("source_evidence_quotes", {}),
+                "stance_matrix_answers": metadata.get("stance_matrix_answers", 0),
                 "opposing_reasons": cluster.opposing_reasons or [],
                 "applicable_conditions": cluster.applicable_conditions or [],
                 "is_mainstream": cluster.is_mainstream,
@@ -926,6 +928,8 @@ async def generate_article(
     feedback: list[str] | None = None,
 ) -> tuple[ArticleDraft, ArticleGeneration]:
     from backend.app.services.opinion_survey import build_survey, survey_paragraphs, SURVEY_INSTRUCTION
+    from backend.app.services.survey_stances import ensure_survey_stances
+    await ensure_survey_stances(session, question, settings, task=task)
     opinion = await session.scalar(
         select(OpinionMap)
         .where(OpinionMap.question_id == question.id)

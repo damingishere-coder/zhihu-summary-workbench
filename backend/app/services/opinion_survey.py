@@ -67,7 +67,8 @@ def build_survey(answers: list[dict[str, Any]], clusters: list[dict[str, Any]]) 
                 unknown.add(answer_id)
             evidence.append({'answer_id': answer_id, 'author_key': identity,
                              'author_name': answer.get('author_name', '匿名用户'),
-                             'answer_url': answer.get('answer_url', ''), 'relation': relation})
+                             'answer_url': answer.get('answer_url', ''), 'relation': relation,
+                             'quote': cluster.get('source_evidence_quotes', {}).get(answer_id, '')})
         groups: dict[str, list[str]] = {key: [] for key in ('supports', 'opposes', 'conditional', 'mixed', 'related')}
         for identity, relations in by_author.items():
             stance = combined_relation(relations)
