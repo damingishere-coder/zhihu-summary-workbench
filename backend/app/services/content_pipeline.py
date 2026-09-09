@@ -613,7 +613,7 @@ async def refine_clusters(
         for index, members in enumerate(rough)
     ]
     service.system_prompt += "\n输入每项为独立观点，可以合并或保持独立。每个索引必须且只能分配一次，不得漏掉少数派。source_relations 数组必须对每个 source_cluster_index 标明其相对本簇中心结论的 relation：supports/opposes/conditional/related；来源数不是支持票数。"
-    service.system_prompt += "\n当前用途是统计答主观点人数。每个簇只代表一个清楚的核心主张；仅在核心主张相同时合并，不把当前现状与长期预测、共同核心与个别理由拼成一个复合观点。supports 必须确实支持簇标题的完整主张，否则分开或标为 conditional/related。"
+    service.system_prompt += "\n当前用途是向普通读者展示几类主要观点各有多少作者。按语义相近的观点方向归组，而非逐句生成小标题：措辞不同、不同例子、不同时间或人群条件可以属于同一观点方向，用 conditional/related 区分，保留少数派与反对者。通常将一批观点归为 8-12 个可比较方向（内容很少时可以更少，确有必要时可更多），不要把几十条输入原样拆成几十个单条簇。标题写清共同核心判断，summary 说明共同核心和各来源的条件差异，不能让每人看起来都支持同组全部细节；source_relations 相对于标题的核心判断。相同作者的补充理由尽量放在所属方向中，不单独作为统计大类。"
     refined_items = []
     for start in range(0, len(rough_payload), 64):
         batch = rough_payload[start:start + 64]
