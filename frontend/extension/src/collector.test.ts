@@ -86,6 +86,48 @@ describe("Zhihu DOM-first collector", () => {
     }
   });
 
+  it("leaves the bottom and scrolls back down to load the next answers", async () => {
+    document.body.insertAdjacentHTML("beforeend", answerCard("900010", "已保存的回答"));
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(6000);
+    vi.stubGlobal("innerHeight", 1000);
+    let top = 5000;
+    let leftBottom = false;
+    vi.spyOn(window, "scrollY", "get").mockImplementation(() => top);
+    const scroll = vi.fn((options: ScrollToOptions) => {
+      top = Math.min(5000, Number(options.top));
+      if (top < 5000) leftBottom = true;
+      if (top === 5000 && leftBottom && !document.querySelector('[data-zop*="900011"]')) {
+        document.body.insertAdjacentHTML("beforeend", answerCard("900011", "回滑之后才出现的新回答"));
+      }
+    });
+    vi.stubGlobal("scrollTo", scroll);
+    const result = await collectInPage({ question_external_id: "58173613", mode: "complete",
+      max_answers: 1, known_answer_ids: ["900010"], allow_empty: true,
+      max_scroll_rounds: 4, scroll_delay_ms: 0 });
+    expect(result.kind).toBe("completed");
+    if (result.kind !== "completed") return;
+    expect(result.bundle.answers).toMatchObject([{ id: "900011" }]);
+    expect(scroll.mock.calls[0][0].top).toBeLessThan(5000);
+    expect(scroll.mock.calls[1][0].top).toBe(6000);
+    expect(result.bundle.capture).toMatchObject({ reached_end: false,
+      diagnostics: expect.arrayContaining([expect.objectContaining({ code: "scroll_retrigger" })]) });
+  });
+
+  it("stops bounded retries without claiming an unresponsive page is complete", async () => {
+    document.body.insertAdjacentHTML("beforeend", answerCard("900010", "已保存的回答"));
+    vi.spyOn(document.documentElement, "scrollHeight", "get").mockReturnValue(6000);
+    vi.stubGlobal("innerHeight", 1000);
+    vi.spyOn(window, "scrollY", "get").mockReturnValue(5000);
+    const result = await collectInPage({ question_external_id: "58173613", mode: "complete",
+      max_answers: 20, known_answer_ids: ["900010"], allow_empty: true,
+      max_scroll_rounds: 12, scroll_delay_ms: 0 });
+    expect(result.kind).toBe("completed");
+    if (result.kind !== "completed") return;
+    expect(result.bundle.answers).toEqual([]);
+    expect(result.bundle.capture).toMatchObject({ reached_end: false });
+    expect(window.scrollTo).toHaveBeenCalledTimes(6);
+  });
+
   it("pauses for login and verification without calling APIs", async () => {
     window.history.replaceState({}, "", "/signin");
     const login = await collectInPage({ question_external_id: "58173613", mode: "representative", max_answers: 20 });

@@ -279,6 +279,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
   const scrollDelay = Math.max(0, Math.min(Number(request.scroll_delay_ms ?? 1200), 2_000));
   let stagnantRounds = 0;
   let previousVisible = -1;
+  let scrollRetriggers = 0;
 
   const answerCards = () => {
     const cards = new Set<HTMLElement>();
@@ -379,8 +380,19 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     if (answersById.size === previousVisible) stagnantRounds += 1;
     else stagnantRounds = 0;
     previousVisible = answersById.size;
-    if (stagnantRounds >= 2) break;
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+    if (stagnantRounds >= 3) break;
+    const pageHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+    const bottom = Math.max(0, pageHeight - viewportHeight);
+    const currentTop = window.scrollY || document.scrollingElement?.scrollTop || 0;
+    if (bottom > 0 && currentTop >= bottom - 4) {
+      // A second scroll to the same bottom does not re-enter the lazy-load trigger.
+      // Leave the bottom first, then scroll down again as a reader would.
+      window.scrollTo({ top: Math.max(0, bottom - Math.max(240, viewportHeight * 0.75)), behavior: "auto" });
+      await new Promise((resolve) => window.setTimeout(resolve, Math.min(scrollDelay, 300)));
+      scrollRetriggers += 1;
+    }
+    window.scrollTo({ top: pageHeight, behavior: "auto" });
     await new Promise((resolve) => window.setTimeout(resolve, scrollDelay));
   }
 
@@ -400,6 +412,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     };
   }
   if (expandedCount) diagnostic("answers_expanded", "info", `自动展开了 ${expandedCount} 个回答正文`);
+  if (scrollRetriggers) diagnostic("scroll_retrigger", "info", `已执行 ${scrollRetriggers} 次向上回滑再下滑，重新触发后续回答加载`);
   diagnostic("dom_capture", "info", `从当前可见页面采集 ${answers.length} 条回答`);
   const warnings: string[] = [];
   if (answers.length < answerLimit) {

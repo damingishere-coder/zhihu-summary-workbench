@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "知乎总结工作台桥接",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "在已登录的知乎标签页中采集结构化问题与回答并回传本机工作台。",
   "permissions": [
     "storage",
