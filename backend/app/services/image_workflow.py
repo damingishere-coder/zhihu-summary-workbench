@@ -374,7 +374,10 @@ async def generate_prompt_version(
     current = (
         await _current_version(session, image_draft) if image_draft else None
     )
-    if not current or not current.content_json.get("title"):
+    if (not current or not current.content_json.get("title") or
+        (draft.analysis_snapshot.get('opinion_survey') and
+         (not current.content_json.get('opinion_survey') or
+          current.copy_state.get('article_version') != draft.current_version))):
         await generate_infographic_content_version(
             session,
             draft,

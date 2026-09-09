@@ -114,3 +114,15 @@ async def test_article_and_image_use_frozen_survey_after_live_sources_change(app
         image = await get_image_workspace(session, draft.id)
         edited = await update_infographic_version(session, image, ImageEditorUpdate(content=InfographicContentData.model_validate(workspace.current.content_json)))
         assert edited.current.content_json['opinion_survey'] == frozen
+        from backend.app.services.image_workflow import generate_prompt_version
+        next_survey = deepcopy(frozen)
+        next_survey['rows'][0]['name'] = '新文章版本的观点标题'
+        draft.current_version += 1
+        session.add(ArticleVersion(draft_id=draft.id, version=draft.current_version,
+                    title=draft.title, content=draft.content,
+                    source_snapshot={**version.source_snapshot, 'opinion_survey': next_survey}))
+        await session.commit()
+        await session.refresh(draft, ['question'])
+        prompted = await generate_prompt_version(session, draft, get_settings(), visual_style='简洁', aspect_ratio='3:4')
+        assert prompted.current.content_json['opinion_survey'] == next_survey
+        assert prompted.current.copy_state['article_version'] == draft.current_version
