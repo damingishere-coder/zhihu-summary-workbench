@@ -3,7 +3,7 @@ from copy import deepcopy
 import pytest
 from sqlalchemy import select
 
-from backend.app.services.opinion_survey import author_key, build_survey, survey_paragraphs
+from backend.app.services.opinion_survey import author_key, build_survey, survey_paragraphs, combined_relation
 from backend.app.services.survey_chart import survey_chart_html
 
 
@@ -57,7 +57,18 @@ def test_chart_values_are_same_as_article_and_escape_labels():
     html = survey_chart_html({'opinion_survey': survey, 'title': '观点'}, 1080, 1440)
     assert '1 人 · 50.0%' in html
     assert '<script>' not in html and '&lt;script&gt;' in html
-    assert '明确支持 1 人（50.0%）' in survey_paragraphs(survey, ['1', '2'])[1].content
+    assert '认同 1 人（50.0%）' in survey_paragraphs(survey, ['1', '2'])[1].content
+
+
+def test_background_does_not_dilute_support_and_conditions_are_counted_explicitly():
+    assert combined_relation({'supports', 'related'}) == 'supports'
+    assert combined_relation({'conditional', 'opposes'}) == 'mixed'
+    assert combined_relation({'mixed'}) == 'mixed'
+    row = cluster('c', {'1': 'supports', '2': 'conditional', '3': 'opposes'})
+    survey = build_survey([answer('1', 'a'), answer('2', 'b'), answer('3', 'c')], [row])
+    assert survey['rows'][0]['endorsement_count'] == 2
+    assert survey['rows'][0]['endorsement_percent'] == 66.7
+    assert '认同 2 人（66.7%）' in survey_paragraphs(survey, ['1', '2', '3'])[1].content
 
 
 @pytest.mark.asyncio

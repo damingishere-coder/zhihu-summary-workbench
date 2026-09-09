@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from backend.app.schemas.analysis import ArticleParagraph
 
 
-SURVEY_VERSION = 1
+SURVEY_VERSION = 2
 SURVEY_INSTRUCTION = """本产品输出的是该问题下回答作者的观点调查汇总。不要以自己的身份解答原问题，
 不要推算题目中的行业数据或提出自己的解释。survey 是程序按作者主页去重得到的统计快照，
 人数、占比、分母只能引用 survey，点赞数、来源数和观点条数都不是人数。
@@ -34,7 +34,7 @@ def author_key(url: str) -> str | None:
 
 
 def combined_relation(relations: set[str]) -> str:
-    if 'supports' in relations and 'opposes' in relations:
+    if 'mixed' in relations or ('opposes' in relations and relations & {'supports', 'conditional'}):
         return 'mixed'
     if 'conditional' in relations:
         return 'conditional'
@@ -75,17 +75,20 @@ def build_survey(answers: list[dict[str, Any]], clusters: list[dict[str, Any]]) 
             if stance != 'related':
                 classified.add(identity)
         counts = {key: len(value) for key, value in groups.items()}
+        endorsement_count = counts['supports'] + counts['conditional']
         rows.append({'cluster_id': cluster['id'], 'name': cluster['name'], 'summary': cluster['summary'],
                      'counts': counts, 'support_percent': round(counts['supports'] * 100 / denominator, 1) if denominator else None,
+                     'endorsement_count': endorsement_count,
+                     'endorsement_percent': round(endorsement_count * 100 / denominator, 1) if denominator else None,
                      'author_groups': {k: sorted(v) for k, v in groups.items()},
                      'unidentified_answer_count': len(unknown), 'evidence': evidence})
-    rows.sort(key=lambda row: (-row['counts']['supports'], -sum(row['counts'].values()), row['cluster_id']))
+    rows.sort(key=lambda row: (-row['endorsement_count'], -sum(row['counts'].values()), row['cluster_id']))
     return {'version': SURVEY_VERSION, 'unit': 'identified_author', 'denominator': denominator,
             'collected_answers': len(answers_by_id),
             'analyzed_answers': sum(bool(a.get('included_for_analysis')) for a in answers_by_id.values()),
             'unidentified_answers': sum(value is None for value in identities.values()),
             'unclassified_authors': len(authors - classified), 'rows': rows,
-            'method': '按公开作者主页去重，同一观点每位作者只计一次；同时支持和反对记为混合态度。多观点可重叠，占比不必合计100%。未归类不等于反对。'}
+            'method': '按公开作者主页去重，同一观点每位作者只计一次。认同人数为明确支持与有条件认同之和；认同与反对并存记为混合态度，单独列出。多观点可重叠，占比不必合计100%。未归类不等于反对。'}
 
 
 def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[ArticleParagraph]:
@@ -97,10 +100,11 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
     result = [ArticleParagraph(paragraph_id='survey_scope', content=scope, source_answer_ids=answer_ids)]
     for index, row in enumerate(survey['rows']):
         counts = row['counts']
-        percent = f"{row['support_percent']:.1f}%" if n else '无法计算'
+        percent = f"{row['endorsement_percent']:.1f}%" if n else '无法计算'
         heading = '\n## 各观点有多少人\n' if index == 0 else ''
-        content = f"{heading}- {row['name']}：明确支持 {counts['supports']} 人（{percent}）"
-        for key, label in [('opposes', '反对'), ('conditional', '有条件认同'), ('mixed', '混合态度'), ('related', '仅相关提及')]:
+        content = (f"{heading}- {row['name']}：认同 {row['endorsement_count']} 人（{percent}），"
+                   f"其中明确支持 {counts['supports']} 人、有条件认同 {counts['conditional']} 人")
+        for key, label in [('opposes', '反对'), ('mixed', '混合态度'), ('related', '仅相关提及')]:
             if counts[key]:
                 content += f"；{label} {counts[key]} 人"
         if row['unidentified_answer_count']:

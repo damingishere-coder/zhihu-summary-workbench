@@ -665,7 +665,8 @@ async def refine_clusters(
             relation = relation_map.get(item["index"], "related")
             for answer_id in item["answer_ids"]:
                 relations[answer_id].add(relation)
-        answer_relations = {key: next(iter(value)) if len(value) == 1 else "conditional" for key, value in relations.items()}
+        from backend.app.services.opinion_survey import combined_relation
+        answer_relations = {key: combined_relation(value) for key, value in relations.items()}
         cluster = ClaimCluster(
             question_id=question.id,
             name=refined.name,

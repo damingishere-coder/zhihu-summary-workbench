@@ -373,7 +373,7 @@ async def render_infographic(
     settings: Settings,
 ) -> None:
     if version.content_json.get('opinion_survey'):
-        rows = version.content_json['opinion_survey']['rows'][:8]
+        rows = version.content_json['opinion_survey']['rows'][:12]
         version.canvas_height = max(version.canvas_height, 1100 + len(rows) * 185)
     html_payload = build_infographic_html(image_draft, version)
     folder = (

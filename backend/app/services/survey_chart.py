@@ -4,23 +4,25 @@ from html import escape
 
 def survey_chart_html(payload: dict, width: int, height: int) -> str:
     survey = payload['opinion_survey']
-    rows = survey['rows'][:8]
+    rows = survey['rows'][:12]
     denominator = survey['denominator']
     blocks = []
     for i, row in enumerate(rows, 1):
         counts = row['counts']
-        percent = f"{row['support_percent']:.1f}%" if denominator else '无可识别作者'
-        bar_width = row['support_percent'] or 0
+        endorsement_count = row.get('endorsement_count', counts['supports'] + counts['conditional'])
+        endorsement_percent = round(endorsement_count * 100 / denominator, 1) if denominator else None
+        percent = f"{endorsement_percent:.1f}%" if denominator else '无可识别作者'
+        bar_width = endorsement_percent or 0
         blocks.append(f'''<section class="row">
           <div class="safe-text" data-field="观点"><b>{i:02d}</b> {escape(row['name'])}</div>
           <div class="bar-line"><div class="track"><div class="bar" style="width:{bar_width}%"></div></div>
-          <strong class="safe-text" data-field="支持人数">{counts['supports']} 人 · {percent}</strong></div>
-          <p class="safe-text" data-field="其他态度">反对 {counts['opposes']} · 有条件认同 {counts['conditional']} · 混合 {counts['mixed']} · 仅提及 {counts['related']} 人</p>
+          <strong class="safe-text" data-field="认同人数">{endorsement_count} 人 · {percent}</strong></div>
+          <p class="safe-text" data-field="态度细分">明确支持 {counts['supports']} · 条件认同 {counts['conditional']} · 反对 {counts['opposes']} · 混合 {counts['mixed']} · 仅提及 {counts['related']} 人</p>
         </section>''')
-    common = [r for r in survey['rows'] if r['counts']['supports'] >= 2][:2]
+    common = [r for r in survey['rows'] if r['counts']['supports'] + r['counts']['conditional'] >= 2][:2]
     themes = ''.join(f"<p class='safe-text' data-field='共同观点'>• {escape(r['summary'][:100])}{'…' if len(r['summary']) > 100 else ''}</p>" for r in common)
     if not themes:
-        themes = '<p class="safe-text" data-field="共同观点">当前已归类样本中，尚无至少两位可识别作者明确支持的共同观点。</p>'
+        themes = '<p class="safe-text" data-field="共同观点">当前已归类样本中，尚无至少两位可识别作者认同的共同观点。</p>'
     title = escape(payload.get('question_title') or payload.get('title') or '回答观点汇总')
     return f'''<!doctype html><html lang="zh-CN"><meta charset="utf-8"><style>
     * {{ box-sizing:border-box }} body {{margin:0;font-family:"Microsoft YaHei","Noto Sans CJK SC",sans-serif;color:#18334e;background:#edf2f8}}
@@ -38,7 +40,7 @@ def survey_chart_html(payload: dict, width: int, height: int) -> str:
     <h1 class="safe-text" data-field="问题">{title}</h1>
     <div class="scope safe-text" data-field="采集范围">保存 {survey['collected_answers']} 条回答 · 分析 {survey['analyzed_answers']} 条<br>
     识别 {denominator} 位作者 · 未归类 {survey['unclassified_authors']} 位 · 身份不明 {survey['unidentified_answers']} 条回答</div>
-    <h2>各观点的明确支持人数</h2><p class="safe-text" data-field="图表口径">占比以 {denominator} 位可识别作者为分母；展示 {len(rows)}/{len(survey['rows'])} 个观点，完整分布及来源见正文。</p>
+    <h2>各观点的认同人数（含有条件认同）</h2><p class="safe-text" data-field="图表口径">占比以 {denominator} 位可识别作者为分母；展示 {len(rows)}/{len(survey['rows'])} 个观点，完整分布及来源见正文。</p>
     {''.join(blocks)}<div class="themes"><h2>回答中重复出现的观点</h2>{themes}</div>
     <div class="footer">{escape(survey['method'])}<br>仅代表已采集样本，未确认覆盖全部回答。匿名来源单列；归类由 AI 辅助，原回答和完整统计随文章版本保存。</div>
     </main></html>'''
