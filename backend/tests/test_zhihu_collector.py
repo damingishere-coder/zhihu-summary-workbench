@@ -32,8 +32,10 @@ def test_clean_answer_html_preserves_text_links_and_media() -> None:
     assert media["formulas"] == ["x^2+y^2"]
 
 
-def test_basic_filter_marks_short_and_ads_without_deleting_content() -> None:
-    assert basic_filter_reason("哈哈") == "内容过短"
+def test_basic_filter_keeps_short_views_but_marks_empty_and_ads() -> None:
+    assert basic_filter_reason("收入压力大，不想买车") == ""
+    assert basic_filter_reason("支持") == ""
+    assert basic_filter_reason("   ") == "内容为空"
     assert (
         basic_filter_reason(
             "这是一段看似正常但实际用于推广的长内容，加微信获得资料，"

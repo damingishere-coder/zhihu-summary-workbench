@@ -99,10 +99,13 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
         counts = row['counts']
         percent = f"{row['support_percent']:.1f}%" if n else '无法计算'
         heading = '\n## 各观点有多少人\n' if index == 0 else ''
-        content = (f"{heading}- {row['name']}：明确支持 {counts['supports']} 人（{percent}）；"
-                   f"反对 {counts['opposes']} 人；有条件认同 {counts['conditional']} 人；"
-                   f"混合态度 {counts['mixed']} 人；仅相关提及 {counts['related']} 人。"
-                   f"另有身份不明来源 {row['unidentified_answer_count']} 条。\n{row['summary']}")
+        content = f"{heading}- {row['name']}：明确支持 {counts['supports']} 人（{percent}）"
+        for key, label in [('opposes', '反对'), ('conditional', '有条件认同'), ('mixed', '混合态度'), ('related', '仅相关提及')]:
+            if counts[key]:
+                content += f"；{label} {counts[key]} 人"
+        if row['unidentified_answer_count']:
+            content += f"；身份不明来源 {row['unidentified_answer_count']} 条"
+        content += '。'
         result.append(ArticleParagraph(paragraph_id=f'survey_{index}', content=content,
                      cluster_ids=[row['cluster_id']], source_answer_ids=[a['answer_id'] for a in row['evidence']]))
     return result

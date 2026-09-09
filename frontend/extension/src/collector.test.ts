@@ -44,7 +44,7 @@ describe("Zhihu DOM-first collector", () => {
     expect(fetch).not.toHaveBeenCalled;
   });
 
-  it("expands content, scrolls for later answers, and deduplicates content", async () => {
+  it("keeps identical text from different answer IDs for author statistics", async () => {
     document.body.insertAdjacentHTML("beforeend", `<button id="expand">展开阅读全文</button>${answerCard("900003", "重复正文")}${answerCard("900004", "重复正文")}`);
     document.querySelector("#expand")?.addEventListener("click", () => {
       document.querySelector("#expand")?.remove();
@@ -66,9 +66,9 @@ describe("Zhihu DOM-first collector", () => {
     expect(result.kind).toBe("completed");
     if (result.kind !== "completed") return;
     const bundle = result.bundle as { answers: Array<Record<string, unknown>>; capture: { diagnostics: Array<{ code: string }> }; warnings: string[] };
-    expect(bundle.answers.map((answer) => answer.id)).toEqual(["900003", "900005"]);
+    expect(bundle.answers.map((answer) => answer.id)).toEqual(["900003", "900004", "900005"]);
     expect(bundle.capture.diagnostics.map((item) => item.code)).toContain("answers_expanded");
-    expect(bundle.warnings[0]).toContain("少于目标");
+    expect(bundle.warnings).toEqual([]);
   });
 
   it("reports page changes instead of fabricating answers", async () => {

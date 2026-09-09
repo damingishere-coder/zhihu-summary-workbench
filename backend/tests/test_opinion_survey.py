@@ -61,6 +61,28 @@ def test_chart_values_are_same_as_article_and_escape_labels():
 
 
 @pytest.mark.asyncio
+async def test_reassessment_keeps_short_views_and_preserves_manual_exclusions(app_client):
+    from backend.app.db.session import get_session_factory
+    from backend.app.models.content import Answer
+    _, client, _ = app_client
+    question = (await client.post('/api/questions/manual', json={
+        'url': 'https://www.zhihu.com/question/12345678', 'title': '为什么不买车？'})).json()
+    async with get_session_factory()() as session:
+        for i, reason in enumerate(['内容过短', '内容哈希重复', '运营人员手动排除']):
+            session.add(Answer(question_id=question['id'], answer_external_id=f'short-{i}',
+                               content_hash='a' * 64,
+                               plain_content='收入压力大，不想买车', included_for_analysis=False,
+                               filter_reason=reason))
+        await session.commit()
+    result = await client.post(f"/api/questions/{question['id']}/evaluate")
+    assert result.status_code == 200, result.text
+    assert result.json()['counts'] == {'total': 3, 'included': 2, 'filtered': 1}
+    async with get_session_factory()() as session:
+        manual = await session.scalar(select(Answer).where(Answer.answer_external_id == 'short-2'))
+        assert not manual.included_for_analysis and manual.filter_reason == '运营人员手动排除'
+
+
+@pytest.mark.asyncio
 async def test_article_and_image_use_frozen_survey_after_live_sources_change(app_client):
     from backend.tests.test_manual_production import queued_fixture
     from backend.tests.test_task_flow import FakeZhihuCollector

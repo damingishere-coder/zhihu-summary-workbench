@@ -22,6 +22,7 @@ from backend.app.ai.services.content import (
     CLUSTER_SYSTEM_PROMPT,
     OPINION_MAP_SYSTEM_PROMPT,
     QUALITY_SYSTEM_PROMPT,
+    SURVEY_QUALITY_INSTRUCTION,
     REVIEW_SYSTEM_PROMPT,
     REWRITE_SYSTEM_PROMPT,
     AnswerClaimBatchService,
@@ -32,7 +33,7 @@ from backend.app.ai.services.content import (
     DraftRewriteService,
     OpinionMapGenerationService,
 )
-from backend.app.collectors.zhihu import ZhihuCollector, ZhihuFetchResult
+from backend.app.collectors.zhihu import ZhihuCollector, ZhihuFetchResult, basic_filter_reason
 from backend.app.core.config import Settings
 from backend.app.models.common import utc_now
 from backend.app.models.content import (
@@ -147,21 +148,12 @@ async def fetch_and_store_answers(
     existing_by_external = {
         item.answer_external_id: item for item in existing_answers
     }
-    seen_hashes = {
-        item.content_hash
-        for item in existing_answers
-        if item.content_hash
-    }
     created = 0
     updated = 0
     for incoming in result.answers:
         answer = existing_by_external.get(incoming.external_id)
-        duplicate_reason = ""
-        if incoming.content_hash in seen_hashes and (
-            not answer or answer.content_hash != incoming.content_hash
-        ):
-            duplicate_reason = "内容哈希重复"
-        filter_reason = incoming.filter_reason or duplicate_reason
+        # Identical text from different answers still represents different authors.
+        filter_reason = basic_filter_reason(incoming.plain_content)
         values = {
             "author_name": incoming.author_name,
             "author_url": incoming.author_url,
@@ -216,7 +208,6 @@ async def fetch_and_store_answers(
                     raw_snapshot=incoming.raw_snapshot,
                 )
             )
-        seen_hashes.add(incoming.content_hash)
 
     question.status = "cleaning_answers"
     await session.commit()
@@ -289,7 +280,7 @@ async def evaluate_answers(
         provider,
         await get_active_prompt(
             session, "answer_quality_evaluation", QUALITY_SYSTEM_PROMPT
-        ),
+        ) + "\n" + SURVEY_QUALITY_INSTRUCTION,
     )
     answers = (
         await session.scalars(
@@ -298,6 +289,11 @@ async def evaluate_answers(
             .order_by(Answer.sort_order)
         )
     ).all()
+    # Re-evaluate previous automatic exclusions under the survey criteria, while
+    # retaining explicit manual exclusions. Old quality reasons are not permanent.
+    for item in answers:
+        if item.filter_reason != "运营人员手动排除":
+            item.filter_reason = basic_filter_reason(item.plain_content)
     candidates = [item for item in answers if not item.filter_reason]
     batch_size = max(1, settings.answer_quality_batch_size)
     returned_ids: set[str] = set()
@@ -330,8 +326,7 @@ async def evaluate_answers(
                 continue
             returned_ids.add(answer.id)
             answer.included_for_analysis = quality.include
-            if not quality.include:
-                answer.filter_reason = quality.reason
+            answer.filter_reason = "" if quality.include else quality.reason
             analysis = await session.scalar(
                 select(AnswerAnalysis).where(AnswerAnalysis.answer_id == answer.id)
             )
@@ -618,6 +613,7 @@ async def refine_clusters(
         for index, members in enumerate(rough)
     ]
     service.system_prompt += "\n输入每项为独立观点，可以合并或保持独立。每个索引必须且只能分配一次，不得漏掉少数派。source_relations 数组必须对每个 source_cluster_index 标明其相对本簇中心结论的 relation：supports/opposes/conditional/related；来源数不是支持票数。"
+    service.system_prompt += "\n当前用途是统计答主观点人数。每个簇只代表一个清楚的核心主张；仅在核心主张相同时合并，不把当前现状与长期预测、共同核心与个别理由拼成一个复合观点。supports 必须确实支持簇标题的完整主张，否则分开或标为 conditional/related。"
     refined_items = []
     for start in range(0, len(rough_payload), 64):
         batch = rough_payload[start:start + 64]
@@ -955,6 +951,7 @@ async def generate_article(
         for a in snapshot_answers
     ], clusters)
     request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters, "survey": survey,
+        "source_hashes": {a.id: a.content_hash for a in snapshot_answers},
         "feedback": feedback, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
         ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     if task:
@@ -978,6 +975,7 @@ async def generate_article(
         clusters=clusters,
         target_length=settings.article_target_length,
         survey=survey,
+        source_answers={a.id: {"author_url": a.author_url, "content": a.plain_content} for a in snapshot_answers},
     )
     await record_model_usage(
         session,
@@ -1157,6 +1155,7 @@ async def review_article(
             "title": draft.title,
             "content": draft.content,
             "opinion_survey": version.source_snapshot.get("opinion_survey"),
+            "source_answers": version.source_snapshot.get("answers", {}),
             "paragraphs": [
                 {"paragraph_id": key, **value} for key, value in grouped.items()
             ],
