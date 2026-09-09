@@ -22,6 +22,7 @@ export type CaptureAttempt = {
   collected_answer_count: number;
   diagnostics: CaptureDiagnostic[];
   reached_end?: boolean;
+  stop_reason?: string;
 };
 
 export type PageCollectResult =
@@ -280,6 +281,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
   let stagnantRounds = 0;
   let previousVisible = -1;
   let scrollRetriggers = 0;
+  let stoppedForNoProgress = false;
 
   const answerCards = () => {
     const cards = new Set<HTMLElement>();
@@ -380,7 +382,10 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     if (answersById.size === previousVisible) stagnantRounds += 1;
     else stagnantRounds = 0;
     previousVisible = answersById.size;
-    if (stagnantRounds >= 3) break;
+    if (stagnantRounds >= 3) {
+      stoppedForNoProgress = true;
+      break;
+    }
     const pageHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
     const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
     const bottom = Math.max(0, pageHeight - viewportHeight);
@@ -428,6 +433,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
   const capture = captureAttempt(visibleAnswerCount, answers.length);
   const endMarkers = [...document.querySelectorAll(".List-footer, .List-end, .EmptyState, [data-za-detail-view-element_name='ListEnd']")];
   capture.reached_end = endMarkers.some((el) => /没有更多|已显示全部|没有更多回答|已经到底/.test(el.textContent || ""));
+  capture.stop_reason = capture.reached_end ? "page_end" : stoppedForNoProgress ? "no_progress" : "";
   return {
     kind: "completed",
     bundle: {

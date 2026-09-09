@@ -1,5 +1,7 @@
 # Prototype Instructions
 
+2026-09-09 collection decision: after reaching the page bottom, scroll upward and then down again to retrigger answers. Stop after three consecutive scroll rounds without new answers and treat the saved set as the maximum accessible sample for this run. Do not wait indefinitely for the platform count to match; preserve the platform count and actual sample count separately, without claiming unseen answers are deleted or hidden. Keep the daily ten-question plan paused while validating one question.
+
 2026-09-09 user clarification: the product surveys the authors of answers under one Zhihu question, not comments under an article. Lead with collection scope, unique author counts, per-viewpoint stance counts and percentages, then summarize shared views and disagreements and show statistical charts. Counts must be computed from attributed answers with profile-based deduplication; likes are not people, anonymous identities stay separate, unclassified authors are not opponents, and overlapping viewpoints need an explicit denominator. Article and chart must use the same frozen statistics. Do not turn the output into the AI's own answer to the question.
 
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.

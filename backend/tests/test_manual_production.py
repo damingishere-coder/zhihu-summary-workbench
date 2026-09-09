@@ -102,6 +102,31 @@ async def test_daily_plan_fills_from_manual_is_idempotent_and_pause_retains_ids(
     assert plan["result"]["waiting"] == 3
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stop_reason,expected", [("no_progress", "waiting_review"), ("", "paused")])
+async def test_small_available_sample_continues_only_after_bounded_scroll_stop(app_client, stop_reason, expected):
+    _, client, broker = app_client
+    info = await queued_fixture(client, broker)
+    class SmallSampleCollector(FakeZhihuCollector):
+        async def fetch_question_and_answers(self, question_id, **kwargs):
+            result = await super().fetch_question_and_answers(question_id, **kwargs)
+            result.answers = result.answers[:5]
+            result.capture = {"collected_answer_count": 5, "reached_end": False, "stop_reason": stop_reason}
+            return result
+    async with get_session_factory()() as session:
+        task = await session.get(TaskJob, info["id"])
+        task.payload = {**task.payload, "produce_images": True}
+        await session.commit()
+    await process_task(info["id"], worker_id="test", settings=get_settings(), broker=broker,
+        session_factory=get_session_factory(), collector=SmallSampleCollector())
+    task = (await client.get(f"/api/tasks/{info['id']}")).json()
+    assert task["status"] == expected, task.get("error_message")
+    if stop_reason:
+        assert task["result"]["images_complete"]
+        draft = (await client.get(f"/api/drafts/{task['result']['draft_id']}")).json()
+        assert "按本次可获取的最多回答完成采集" in draft["content"]
+
+
 def test_long_answer_chunks_include_the_tail():
     text = "甲" * 18001 + "独特的尾部反对意见"
     segments = chunks([{"answer_id": "a", "plain_content": text}])

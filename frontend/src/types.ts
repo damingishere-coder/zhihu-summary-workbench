@@ -47,6 +47,8 @@ export interface CaptureDiagnostic {
 }
 
 export interface CaptureSummary {
+  stop_reason?: string;
+  reached_end?: boolean;
   version?: number | null;
   method?: string | null;
   page_url?: string | null;

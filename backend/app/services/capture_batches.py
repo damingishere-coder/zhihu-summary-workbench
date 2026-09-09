@@ -65,6 +65,11 @@ async def _save(factory, broker, *, client_id: str, payload: dict[str, Any]) -> 
                 "visible_answer_count": max(count, int(merged.get("capture", {}).get("visible_answer_count", 0))),
                 "elapsed_seconds": elapsed, "stop_reason": reason, "reached_end": reason == "page_end"}
             merged["capture"] = capture
+            if finished and reason == "no_progress":
+                capture["diagnostics"] = [d for d in capture.get("diagnostics", [])
+                    if d.get("code") != "answer_limit_not_reached"] + [{
+                        "code": "available_answers_complete", "level": "info",
+                        "message": f"连续回滑未出现新回答，按本次可获取的最多回答完成采集，累计保存 {count} 条。"}]
             job.result_json = merged
             job.collected_answer_count = count
             job.capture_version = 3

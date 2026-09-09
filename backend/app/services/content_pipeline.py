@@ -999,7 +999,7 @@ async def generate_article(
         count = capture.get("collected_answer_count", 0)
         coverage = f"采集范围：本次读取并保存 {count} 条可访问回答。"
         coverage += "已观察到页面末尾，仍可能存在不可访问或后续新增的回答。" if capture.get("reached_end") else "未确认读取全部回答，以下总结仅代表已采集样本。"
-        reason = {"time_budget": "达到 30 分钟采集预算", "no_progress": "页面未继续加载", "answer_limit": "达到采样数量"}.get(capture.get("stop_reason"))
+        reason = {"time_budget": "达到采集时间预算", "no_progress": "连续回滑未出现新回答，按本次可获取的最多回答完成采集", "answer_limit": "达到采样数量"}.get(capture.get("stop_reason"))
         if reason:
             coverage += f"停止原因：{reason}。"
         result.data.content += "\n\n> " + coverage

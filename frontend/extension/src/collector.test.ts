@@ -124,7 +124,7 @@ describe("Zhihu DOM-first collector", () => {
     expect(result.kind).toBe("completed");
     if (result.kind !== "completed") return;
     expect(result.bundle.answers).toEqual([]);
-    expect(result.bundle.capture).toMatchObject({ reached_end: false });
+    expect(result.bundle.capture).toMatchObject({ reached_end: false, stop_reason: "no_progress" });
     expect(window.scrollTo).toHaveBeenCalledTimes(6);
   });
 

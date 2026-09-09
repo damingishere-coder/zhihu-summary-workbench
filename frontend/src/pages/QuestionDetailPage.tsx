@@ -14,6 +14,7 @@ import {
   Descriptions,
   Drawer,
   Tabs,
+  Pagination,
   Progress,
   Space,
   Timeline,
@@ -78,8 +79,8 @@ export function QuestionDetailPage() {
       processingStates.includes(query.state.data?.status ?? "") ? 2_000 : false,
   });
   const answersQuery = useQuery({
-    queryKey: ["answers", id],
-    queryFn: () => api.answers(id, { limit: 100 }),
+    queryKey: ["answers", id, list.page],
+    queryFn: () => api.answers(id, { limit: 50, offset: (list.page - 1) * 50 }),
     enabled: Boolean(id),
     refetchInterval: processingStates.includes(taskQuery.data?.status ?? "")
       ? 3_000
@@ -380,7 +381,7 @@ export function QuestionDetailPage() {
           />
         ))}
         {task?.result.capture?.diagnostics
-          ?.filter((item) => item.level !== "info")
+          ?.filter((item) => item.level !== "info" && !(task.result.capture?.stop_reason === "no_progress" && item.code === "answer_limit_not_reached"))
           .map((item) => (
             <Alert
               key={`${item.code}-${item.message}`}
@@ -402,7 +403,10 @@ export function QuestionDetailPage() {
                 {task.result.capture?.collected_answer_count ??
                   answersQuery.data?.total ??
                   "未知数量的"}{" "}
-                条回答。仅代表当前已保存的资料，不等于读取全部回答。
+                条回答。
+                {task.result.capture?.stop_reason === "no_progress"
+                  ? "连续回滑未出现新回答，已按本次可获取的最多回答完成采集。平台标注数量可能仍有差额。"
+                  : "仅代表当前已保存的资料，不等于读取全部回答。"}
               </p>
             </>
           ) : (
@@ -445,13 +449,24 @@ export function QuestionDetailPage() {
               onRetry={() => void answersQuery.refetch()}
             />
           ) : (
-            <AnswerExplorer
-              data={answersQuery.data}
-              pendingId={answerToggle.variables?.answerId}
-              onToggle={(answerId, included) =>
-                answerToggle.mutate({ answerId, included })
-              }
-            />
+            <>
+              <AnswerExplorer
+                data={answersQuery.data}
+                pendingId={answerToggle.variables?.answerId}
+                onToggle={(answerId, included) =>
+                  answerToggle.mutate({ answerId, included })
+                }
+              />
+              <Pagination
+                current={list.page}
+                pageSize={50}
+                total={answersQuery.data?.total ?? 0}
+                showSizeChanger={false}
+                hideOnSinglePage
+                showTotal={(total, range) => `第 ${range[0]}–${range[1]} 条，共 ${total} 条回答`}
+                onChange={(page) => list.set("page", page)}
+              />
+            </>
           )}
         </section>
 
