@@ -115,6 +115,9 @@ def _background_data(version: ImageVersion, use_css: bool) -> str:
 def build_infographic_html(
     image_draft: ImageDraft, version: ImageVersion
 ) -> str:
+    if version.content_json.get('opinion_survey'):
+        from backend.app.services.survey_chart import survey_chart_html
+        return survey_chart_html(version.content_json, version.canvas_width, version.canvas_height)
     content = InfographicContentData.model_validate(version.content_json)
     template_type = str(
         version.content_json.get("template_type") or "knowledge_card"
@@ -369,6 +372,9 @@ async def render_infographic(
     version: ImageVersion,
     settings: Settings,
 ) -> None:
+    if version.content_json.get('opinion_survey'):
+        rows = version.content_json['opinion_survey']['rows'][:8]
+        version.canvas_height = max(version.canvas_height, 1100 + len(rows) * 185)
     html_payload = build_infographic_html(image_draft, version)
     folder = (
         REPOSITORY_ROOT

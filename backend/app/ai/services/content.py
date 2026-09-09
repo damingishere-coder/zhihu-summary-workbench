@@ -191,6 +191,7 @@ class ArticleGenerationService:
         opinion_map: dict[str, Any],
         clusters: list[dict[str, Any]],
         target_length: int,
+        survey: dict[str, Any] | None = None,
     ) -> StructuredProviderResult[ArticleGeneration]:
         return await self.provider.generate_structured(
             system_prompt=self.system_prompt,
@@ -201,6 +202,7 @@ class ArticleGenerationService:
                     "opinion_map": opinion_map,
                     "clusters": clusters,
                     "target_length": target_length,
+                    "survey": survey,
                 },
                 ensure_ascii=False,
             ),

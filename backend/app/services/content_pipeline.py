@@ -928,6 +928,7 @@ async def generate_article(
     task: TaskJob | None = None,
     feedback: list[str] | None = None,
 ) -> tuple[ArticleDraft, ArticleGeneration]:
+    from backend.app.services.opinion_survey import build_survey, survey_paragraphs, SURVEY_INSTRUCTION
     opinion = await session.scalar(
         select(OpinionMap)
         .where(OpinionMap.question_id == question.id)
@@ -947,7 +948,13 @@ async def generate_article(
             item["sort_order"],
         )
     )
-    request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters,
+    snapshot_answers = list((await session.scalars(select(Answer).where(Answer.question_id == question.id))).all())
+    survey = build_survey([
+        {"id": a.id, "author_url": a.author_url, "author_name": a.author_name,
+         "answer_url": a.answer_url, "included_for_analysis": a.included_for_analysis}
+        for a in snapshot_answers
+    ], clusters)
+    request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters, "survey": survey,
         "feedback": feedback, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
         ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     if task:
@@ -963,12 +970,14 @@ async def generate_article(
     result = await ArticleGenerationService(
         provider,
         await get_active_prompt(session, "article_generation", ARTICLE_SYSTEM_PROMPT)
+        + "\n以下为当前产品的写作要求，优先于旧模板中的‘直接回答问题’：\n" + SURVEY_INSTRUCTION
         + ("\n修正以下独立审核问题，仍只可使用已有来源：" + json.dumps(feedback, ensure_ascii=False) if feedback else ""),
     ).generate(
         question_title=question.title,
         opinion_map=opinion.content_json,
         clusters=clusters,
         target_length=settings.article_target_length,
+        survey=survey,
     )
     await record_model_usage(
         session,
@@ -977,6 +986,9 @@ async def generate_article(
         task_id=task.id if task else None,
         stage="generating_article",
     )
+    statistics = survey_paragraphs(survey, [a.id for a in snapshot_answers])
+    result.data.content = "\n\n".join(p.content for p in statistics) + "\n\n" + result.data.content
+    result.data.paragraphs = statistics + result.data.paragraphs
     capture = task.result.get("checkpoints", {}).get("fetch", {}).get("metadata", {}).get("capture", {}) if task else {}
     if capture:
         from backend.app.schemas.analysis import ArticleParagraph
@@ -1003,6 +1015,7 @@ async def generate_article(
             "opinion_map_version": opinion.version,
             "answer_count": len(opinion.content_json.get("source_answer_ids", [])),
             "cluster_count": len(clusters),
+            "opinion_survey": survey,
         }
         draft.status = "waiting_review"
         draft.review_result = {}
@@ -1021,6 +1034,7 @@ async def generate_article(
                     opinion.content_json.get("source_answer_ids", [])
                 ),
                 "cluster_count": len(clusters),
+                "opinion_survey": survey,
             },
             review_result={},
         )
@@ -1033,10 +1047,12 @@ async def generate_article(
         content=draft.content,
         source_task_id=task.id if task else None,
     )
-    snapshot_answers = list((await session.scalars(select(Answer).where(Answer.question_id == question.id))).all())
     version.source_snapshot = {
         "request_hash": request_hash,
+        "opinion_survey": survey,
+        "opinion_map": opinion.content_json,
         "answers": {a.id: {"id": a.id, "author": a.author_name, "url": a.answer_url,
+                            "author_url": a.author_url, "included_for_analysis": a.included_for_analysis,
                             "content": a.plain_content, "hash": a.content_hash} for a in snapshot_answers},
         "clusters": clusters,
         "paragraphs": [p.model_dump(mode="json") for p in result.data.paragraphs],
@@ -1134,12 +1150,13 @@ async def review_article(
         provider,
         await get_active_prompt(
             session, "article_quality_review", REVIEW_SYSTEM_PROMPT
-        ),
+        ) + "\n本稿是回答作者的观点调查，不是行业研究或对原问题的独立解答。核对 opinion_survey 中的程序统计、归类依据和样本边界；不要要求补写外部事实。未归类不等于反对。",
     ).review(
         question_title=question.title,
         article={
             "title": draft.title,
             "content": draft.content,
+            "opinion_survey": version.source_snapshot.get("opinion_survey"),
             "paragraphs": [
                 {"paragraph_id": key, **value} for key, value in grouped.items()
             ],

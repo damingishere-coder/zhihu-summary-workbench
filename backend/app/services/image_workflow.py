@@ -17,7 +17,7 @@ from backend.app.ai.services.content import (
 )
 from backend.app.core.config import REPOSITORY_ROOT, Settings
 from backend.app.models.content import ClaimCluster, OpinionMap
-from backend.app.models.core import ArticleDraft
+from backend.app.models.core import ArticleDraft, ArticleVersion
 from backend.app.models.media import ImageDraft, ImageTemplate, ImageVersion
 from backend.app.schemas.analysis import OpinionMapData
 from backend.app.schemas.image import (
@@ -266,6 +266,31 @@ async def generate_infographic_content_version(
     template_type: str,
     canvas_size: str,
 ) -> ImageWorkspaceRead:
+    article_version = await session.scalar(select(ArticleVersion).where(
+        ArticleVersion.draft_id == draft.id, ArticleVersion.version == draft.current_version))
+    frozen = (article_version.source_snapshot or {}) if article_version else {}
+    survey = frozen.get("opinion_survey")
+    if survey:
+        # Statistical labels and values come from the article snapshot, never a model.
+        image_draft = await get_image_workspace(session, draft.id, create=True)
+        assert image_draft is not None
+        current = await _current_version(session, image_draft)
+        content = InfographicContentData(
+            title="回答作者的观点分布",
+            one_line_conclusion=f"{survey['collected_answers']} 条回答 · {survey['denominator']} 位可识别作者",
+            source_cluster_ids=[row['cluster_id'] for row in survey['rows'][:16]],
+            source_answer_ids=list(frozen.get('answers', {}))[:100],
+        ).model_dump(mode='json')
+        content.update(opinion_survey=survey, question_title=draft.title)
+        image_draft.status = "content_ready"
+        await _append_version(session, image_draft,
+            content_json=_editor_defaults(content, template_type=template_type, canvas_size=canvas_size),
+            copy_state={"article_version": draft.current_version},
+            prompt_zh=current.prompt_zh if current else '', prompt_en=current.prompt_en if current else '',
+            background_path=current.background_path if current else None,
+            thumbnail_path=current.thumbnail_path if current else None)
+        await session.commit()
+        return await workspace_to_read(session, image_draft)
     opinion = await session.scalar(
         select(OpinionMap)
         .where(OpinionMap.question_id == draft.question_id)
@@ -419,6 +444,10 @@ async def update_infographic_version(
             "negative_constraints", []
         ),
     }
+    # Editing layout/copy must not silently drop or replace the frozen statistics.
+    if current.content_json.get('opinion_survey'):
+        content_json['opinion_survey'] = current.content_json['opinion_survey']
+        content_json['question_title'] = current.content_json.get('question_title', '')
     await _append_version(
         session,
         image_draft,

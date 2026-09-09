@@ -1,5 +1,7 @@
 # Prototype Instructions
 
+2026-09-09 user clarification: the product surveys the authors of answers under one Zhihu question, not comments under an article. Lead with collection scope, unique author counts, per-viewpoint stance counts and percentages, then summarize shared views and disagreements and show statistical charts. Counts must be computed from attributed answers with profile-based deduplication; likes are not people, anonymous identities stay separate, unclassified authors are not opponents, and overlapping viewpoints need an explicit denominator. Article and chart must use the same frozen statistics. Do not turn the output into the AI's own answer to the question.
+
 Run the local server yourself and open the preview in the browser available to this environment. Do not give the user server-start instructions when you can run it.
 
 Before making substantial visual changes, use the Product Design plugin's `get-context` skill when the visual source is unclear or no longer matches the current goal. When the user gives durable prototype-specific design feedback, preferences, or decisions, record them in `AGENTS.md`.

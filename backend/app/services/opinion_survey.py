@@ -1,0 +1,108 @@
+"""Reproducible author counts from saved answers and attributed stance links."""
+from __future__ import annotations
+
+from collections import defaultdict
+from typing import Any
+from urllib.parse import urlsplit
+
+from backend.app.schemas.analysis import ArticleParagraph
+
+
+SURVEY_VERSION = 1
+SURVEY_INSTRUCTION = """本产品输出的是该问题下回答作者的观点调查汇总。不要以自己的身份解答原问题，
+不要推算题目中的行业数据或提出自己的解释。survey 是程序按作者主页去重得到的统计快照，
+人数、占比、分母只能引用 survey，点赞数、来源数和观点条数都不是人数。
+正文从‘## 回答里的共性’开始，再写‘## 主要分歧与少数观点’及‘## 这份样本能说明什么’。
+写清答主们重复表达的观点、理由、相同前提以及相反/有条件的态度，使用‘这些回答认为’等归纳口吻，
+每段关联实际 cluster_ids/source_answer_ids。不得把样本观点写成已经核实的客观事实。
+采集范围及逐观点人数由程序在正文前统一插入，不要重复生成统计表，不使用虚构数字或未提供的百分比。
+无法识别身份的回答不计入作者人数；未分析/未归类不是反对；允许同一作者持多个观点，占比不必合计100%。
+只说明已采集样本，不宣称代表全体知乎用户。"""
+
+
+def author_key(url: str) -> str | None:
+    """Display names are not identities; unknown/anonymous answers stay separate."""
+    parsed = urlsplit(url.strip())
+    parts = parsed.path.strip('/').split('/')
+    if parsed.scheme not in {'http', 'https'} or parsed.hostname not in {'www.zhihu.com', 'zhihu.com'}:
+        return None
+    if len(parts) != 2 or parts[0] not in {'people', 'org'} or not parts[1]:
+        return None
+    if parts[1].lower() in {'anonymous', 'anonymous-user'}:
+        return None
+    return '/'.join(parts)
+
+
+def combined_relation(relations: set[str]) -> str:
+    if 'supports' in relations and 'opposes' in relations:
+        return 'mixed'
+    if 'conditional' in relations:
+        return 'conditional'
+    if 'supports' in relations:
+        return 'supports'
+    if 'opposes' in relations:
+        return 'opposes'
+    return 'related'
+
+
+def build_survey(answers: list[dict[str, Any]], clusters: list[dict[str, Any]]) -> dict[str, Any]:
+    answers_by_id = {str(a['id']): a for a in answers}
+    identities = {key: author_key(str(a.get('author_url') or '')) for key, a in answers_by_id.items()}
+    authors = {value for value in identities.values() if value}
+    denominator = len(authors)
+    classified: set[str] = set()
+    rows = []
+    for cluster in clusters:
+        by_author: dict[str, set[str]] = defaultdict(set)
+        evidence = []
+        unknown = set()
+        for answer_id, relation in cluster.get('source_relations', {}).items():
+            if answer_id not in answers_by_id:
+                raise ValueError('观点统计引用了未保存的回答')
+            answer = answers_by_id[answer_id]
+            identity = identities[answer_id]
+            if identity:
+                by_author[identity].add(relation)
+            else:
+                unknown.add(answer_id)
+            evidence.append({'answer_id': answer_id, 'author_key': identity,
+                             'author_name': answer.get('author_name', '匿名用户'),
+                             'answer_url': answer.get('answer_url', ''), 'relation': relation})
+        groups: dict[str, list[str]] = {key: [] for key in ('supports', 'opposes', 'conditional', 'mixed', 'related')}
+        for identity, relations in by_author.items():
+            stance = combined_relation(relations)
+            groups[stance].append(identity)
+            if stance != 'related':
+                classified.add(identity)
+        counts = {key: len(value) for key, value in groups.items()}
+        rows.append({'cluster_id': cluster['id'], 'name': cluster['name'], 'summary': cluster['summary'],
+                     'counts': counts, 'support_percent': round(counts['supports'] * 100 / denominator, 1) if denominator else None,
+                     'author_groups': {k: sorted(v) for k, v in groups.items()},
+                     'unidentified_answer_count': len(unknown), 'evidence': evidence})
+    rows.sort(key=lambda row: (-row['counts']['supports'], -sum(row['counts'].values()), row['cluster_id']))
+    return {'version': SURVEY_VERSION, 'unit': 'identified_author', 'denominator': denominator,
+            'collected_answers': len(answers_by_id),
+            'analyzed_answers': sum(bool(a.get('included_for_analysis')) for a in answers_by_id.values()),
+            'unidentified_answers': sum(value is None for value in identities.values()),
+            'unclassified_authors': len(authors - classified), 'rows': rows,
+            'method': '按公开作者主页去重，同一观点每位作者只计一次；同时支持和反对记为混合态度。多观点可重叠，占比不必合计100%。未归类不等于反对。'}
+
+
+def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[ArticleParagraph]:
+    n = survey['denominator']
+    scope = (f"## 采集与统计范围\n本次保存 {survey['collected_answers']} 条回答，其中 {survey['analyzed_answers']} 条参与观点分析。"
+             f"按公开主页去重识别出 {n} 位回答作者，以下占比均以这 {n} 位作者为分母。"
+             f"另有 {survey['unidentified_answers']} 条匿名或身份不明回答不计入人数；{survey['unclassified_authors']} 位作者尚无明确观点归类。"
+             f"\n{survey['method']}本统计仅代表已保存样本，不代表全部回答作者。")
+    result = [ArticleParagraph(paragraph_id='survey_scope', content=scope, source_answer_ids=answer_ids)]
+    for index, row in enumerate(survey['rows']):
+        counts = row['counts']
+        percent = f"{row['support_percent']:.1f}%" if n else '无法计算'
+        heading = '\n## 各观点有多少人\n' if index == 0 else ''
+        content = (f"{heading}- {row['name']}：明确支持 {counts['supports']} 人（{percent}）；"
+                   f"反对 {counts['opposes']} 人；有条件认同 {counts['conditional']} 人；"
+                   f"混合态度 {counts['mixed']} 人；仅相关提及 {counts['related']} 人。"
+                   f"另有身份不明来源 {row['unidentified_answer_count']} 条。\n{row['summary']}")
+        result.append(ArticleParagraph(paragraph_id=f'survey_{index}', content=content,
+                     cluster_ids=[row['cluster_id']], source_answer_ids=[a['answer_id'] for a in row['evidence']]))
+    return result
