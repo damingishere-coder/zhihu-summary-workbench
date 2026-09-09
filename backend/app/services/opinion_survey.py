@@ -96,7 +96,7 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
     n = survey['denominator']
     scope = (f"## 采集与统计范围\n本次保存 {survey['collected_answers']} 条回答，其中 {survey['analyzed_answers']} 条参与观点分析。"
              f"按公开主页去重识别出 {n} 位回答作者，以下占比均以这 {n} 位作者为分母。"
-             f"另有 {survey['unidentified_answers']} 条匿名或身份不明回答不计入人数；{survey['unclassified_authors']} 位作者尚无明确观点归类。"
+             f"另有 {survey['unidentified_answers']} 条匿名或身份不明回答不计入人数；{survey['unclassified_authors']} 位作者尚未判定明确态度（仅相关提及或未涉及各统计观点）。"
              f"\n{survey['method']}本统计仅代表已保存样本，不代表全部回答作者。")
     result = [ArticleParagraph(paragraph_id='survey_scope', content=scope, source_answer_ids=answer_ids)]
     for index, row in enumerate(survey['rows']):

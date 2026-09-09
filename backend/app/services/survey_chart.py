@@ -39,7 +39,7 @@ def survey_chart_html(payload: dict, width: int, height: int) -> str:
     </style><main class="canvas"><div class="kicker">回答作者 · 观点调查</div>
     <h1 class="safe-text" data-field="问题">{title}</h1>
     <div class="scope safe-text" data-field="采集范围">保存 {survey['collected_answers']} 条回答 · 分析 {survey['analyzed_answers']} 条<br>
-    识别 {denominator} 位作者 · 未归类 {survey['unclassified_authors']} 位 · 身份不明 {survey['unidentified_answers']} 条回答</div>
+    识别 {denominator} 位作者 · 未判定态度 {survey['unclassified_authors']} 位 · 身份不明 {survey['unidentified_answers']} 条回答</div>
     <h2>各观点的认同人数（含有条件认同）</h2><p class="safe-text" data-field="图表口径">占比以 {denominator} 位可识别作者为分母；展示 {len(rows)}/{len(survey['rows'])} 个观点，完整分布及来源见正文。</p>
     {''.join(blocks)}<div class="themes"><h2>回答中重复出现的观点</h2>{themes}</div>
     <div class="footer">{escape(survey['method'])}<br>仅代表已采集样本，未确认覆盖全部回答。匿名来源单列；归类由 AI 辅助，原回答和完整统计随文章版本保存。</div>
