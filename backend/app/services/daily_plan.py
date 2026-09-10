@@ -147,7 +147,7 @@ async def execute_daily_plan(session, broker, item, settings, *, trigger):
         used = set()
         if previous:
             used = set((await session.scalars(select(TaskJob.question_id).where(TaskJob.id.in_(previous)))).all())
-        questions = [q for q in questions if q.id not in used]
+        questions = [q for q in questions if q.id not in used and (q.source != 'hot' or q.hot_rank is not None)]
         remaining = max(0, item.question_limit - len(previous))
         hot = [q for q in questions if q.source == "hot"][:item.hot_quota]
         manual = [q for q in questions if q.source != "hot"][:item.manual_quota]

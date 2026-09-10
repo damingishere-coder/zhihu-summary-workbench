@@ -95,6 +95,22 @@ export interface Task {
   logs: TaskLog[];
 }
 
+export interface OpinionSurvey {
+  denominator: number;
+  collected_answers: number;
+  analyzed_answers: number;
+  unclassified_authors: number;
+  method: string;
+  rows: Array<{
+    cluster_id: string;
+    name: string;
+    endorsement_count: number;
+    endorsement_percent: number | null;
+    counts: Record<string, number>;
+    evidence: Array<{ answer_id: string; author_name: string; answer_url: string; relation: string; quote: string }>;
+  }>;
+}
+
 export interface Draft {
   id: string;
   question_id: string;
@@ -105,6 +121,8 @@ export interface Draft {
   content: string;
   analysis_snapshot: Record<string, unknown> & {
     opinion_map?: OpinionMap;
+    opinion_survey?: OpinionSurvey;
+    capture?: { stop_reason?: string; reached_end?: boolean };
     answer_count?: number;
     cluster_count?: number;
     core_claims?: string[];
@@ -264,6 +282,7 @@ export interface ImageVersion {
     background_position_y?: number;
     background_scale?: number;
     opinion_survey?: Record<string, unknown>;
+    visual_format?: "editorial";
   };
   prompt_zh: string;
   prompt_en: string;

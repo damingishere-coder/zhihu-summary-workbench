@@ -953,7 +953,7 @@ async def generate_article(
 ) -> tuple[ArticleDraft, ArticleGeneration]:
     if feedback is None and task:
         feedback = task.result.get('survey_review_feedback')
-    from backend.app.services.opinion_survey import build_survey, survey_paragraphs, SURVEY_INSTRUCTION
+    from backend.app.services.opinion_survey import build_survey, finalize_short_article, SURVEY_INSTRUCTION
     from backend.app.services.survey_stances import ensure_survey_stances
     await ensure_survey_stances(session, question, settings, task=task)
     opinion = await session.scalar(
@@ -983,7 +983,7 @@ async def generate_article(
     ], clusters)
     request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters, "survey": survey,
         "source_hashes": {a.id: a.content_hash for a in snapshot_answers},
-        "feedback": feedback, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
+        "feedback": feedback, "editorial_instruction": SURVEY_INSTRUCTION, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
         ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     if task:
         existing = await session.scalar(select(ArticleVersion).where(ArticleVersion.source_task_id == task.id)
@@ -1004,7 +1004,7 @@ async def generate_article(
         question_title=question.title,
         opinion_map=opinion.content_json,
         clusters=clusters,
-        target_length=settings.article_target_length,
+        target_length=min(settings.article_target_length, 380),
         survey=survey,
         source_answers={a.id: {"author_url": a.author_url, "content": a.plain_content} for a in snapshot_answers},
     )
@@ -1015,22 +1015,8 @@ async def generate_article(
         task_id=task.id if task else None,
         stage="generating_article",
     )
-    statistics = survey_paragraphs(survey, [a.id for a in snapshot_answers])
-    result.data.content = "\n\n".join(p.content for p in statistics) + "\n\n" + result.data.content
-    result.data.paragraphs = statistics + result.data.paragraphs
+    result.data = finalize_short_article(result.data, survey)
     capture = task.result.get("checkpoints", {}).get("fetch", {}).get("metadata", {}).get("capture", {}) if task else {}
-    if capture:
-        from backend.app.schemas.analysis import ArticleParagraph
-        count = capture.get("collected_answer_count", 0)
-        coverage = f"采集范围：本次读取并保存 {count} 条可访问回答。"
-        if count != len(snapshot_answers):
-            coverage += f"本篇统计使用累计保存的 {len(snapshot_answers)} 条回答，包含此前采集资料，已按回答 ID 去重。"
-        coverage += "已观察到页面末尾，仍可能存在不可访问或后续新增的回答。" if capture.get("reached_end") else "未确认读取全部回答，以下总结仅代表已采集样本。"
-        reason = {"time_budget": "达到采集时间预算", "no_progress": "连续回滑未出现新回答，按本次可获取的最多回答完成采集", "answer_limit": "达到采样数量"}.get(capture.get("stop_reason"))
-        if reason:
-            coverage += f"停止原因：{reason}。"
-        result.data.content += "\n\n> " + coverage
-        result.data.paragraphs.append(ArticleParagraph(paragraph_id="capture_scope", kind="disclosure", content=coverage))
     draft = await session.scalar(
         select(ArticleDraft)
         .where(ArticleDraft.question_id == question.id)
@@ -1047,6 +1033,7 @@ async def generate_article(
             "answer_count": len(opinion.content_json.get("source_answer_ids", [])),
             "cluster_count": len(clusters),
             "opinion_survey": survey,
+            "capture": capture,
         }
         draft.status = "waiting_review"
         draft.review_result = {}
@@ -1066,6 +1053,7 @@ async def generate_article(
                 ),
                 "cluster_count": len(clusters),
                 "opinion_survey": survey,
+                "capture": capture,
             },
             review_result={},
         )
@@ -1181,7 +1169,9 @@ async def review_article(
         provider,
         await get_active_prompt(
             session, "article_quality_review", REVIEW_SYSTEM_PROMPT
-        ) + "\n本稿是回答作者的观点调查，不是行业研究或对原问题的独立解答。核对 opinion_survey 中的程序统计、归类依据和样本边界；不要要求补写外部事实。未归类不等于反对。",
+        ) + "\n本稿是500字以内的回答观点短文，完整统计保存在附件。允许只选2至3个核心发现和一个关键分歧，"
+        "不要求逐项覆盖全部观点、列作者名单或在正文补统计表。核对实际采用的观点是否忠于来源、数字是否对应opinion_survey、"
+        "是否夸大共识；不要要求补写外部行业事实。未归类不等于反对。",
     ).review(
         question_title=question.title,
         article={
@@ -1206,6 +1196,9 @@ async def review_article(
     known_answers = set(snapshot.get("answers", {}))
     known_clusters = {item["id"] for item in snapshot.get("clusters", [])}
     source_issues = []
+    from backend.app.services.opinion_survey import article_length
+    if article_length(draft.title, draft.content) > 500:
+        source_issues.append('标题与正文合计超过500字')
     for paragraph in snapshot.get("paragraphs", []):
         if set(paragraph.get("source_answer_ids", [])) - known_answers or set(paragraph.get("cluster_ids", [])) - known_clusters:
             source_issues.append("文章引用了不属于本次采集的来源")

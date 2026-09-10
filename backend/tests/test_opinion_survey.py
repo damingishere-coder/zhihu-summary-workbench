@@ -7,6 +7,32 @@ from backend.app.services.opinion_survey import author_key, build_survey, survey
 from backend.app.services.survey_chart import survey_chart_html
 
 
+def test_short_article_limit_counts_title_punctuation_and_disclosure_without_truncation():
+    from backend.app.schemas.analysis import ArticleGeneration, ArticleParagraph
+    from backend.app.services.opinion_survey import finalize_short_article, article_length
+    survey = build_survey([answer('1', 'alice')], [cluster('c', {'1': 'supports'})])
+    original = ArticleGeneration(title='有趣的反差', content='旧内容', paragraphs=[
+        ArticleParagraph(paragraph_id='p1', content='先看需求，再看是否值得买。', source_answer_ids=['1']),
+        ArticleParagraph(paragraph_id='old_notice', kind='disclosure', content='重复的说明')])
+    result = finalize_short_article(original, survey)
+    assert result.content.startswith('先看需求，再看是否值得买。')
+    assert '重复的说明' not in result.content and '以1位可识别作者计数' in result.content
+    assert article_length(result.title, result.content) < 500
+    assert result.paragraphs[0].source_answer_ids == ['1']
+    original.paragraphs[0].content = '长' * 500
+    with pytest.raises(ValueError, match='超过500'):
+        finalize_short_article(original, survey)
+    assert original.paragraphs[0].content == '长' * 500
+
+
+def test_editorial_picture_does_not_dump_statistics_or_source_quotes():
+    from backend.app.services.editorial_visual import editorial_visual_html
+    survey = build_survey([answer('1', 'alice')], [cluster('c', {'1': 'supports'})])
+    html = editorial_visual_html({'title': '旧车<&新车', 'opinion_survey': survey}, 1080, 1440, 'data:image/png;base64,example')
+    assert '旧车&lt;&amp;新车' in html and 'class="art"' in html
+    assert '保持低门槛' not in html and '<table' not in html and 'bar-line' not in html
+
+
 def answer(identifier, author, included=True):
     return {'id': identifier, 'author_name': '同名用户',
             'author_url': f'https://www.zhihu.com/people/{author}' if author else '',
@@ -134,7 +160,10 @@ async def test_article_and_image_use_frozen_survey_after_live_sources_change(app
         draft = await session.get(ArticleDraft, result['result']['draft_id'])
         version = await session.scalar(select(ArticleVersion).where(ArticleVersion.draft_id == draft.id))
         frozen = deepcopy(version.source_snapshot['opinion_survey'])
-        assert '## 各观点有多少人' in draft.content
+        from backend.app.services.opinion_survey import article_length
+        assert article_length(draft.title, draft.content) <= 500
+        assert '## 各观点有多少人' not in draft.content
+        assert frozen['rows']
         source = await session.scalar(select(Answer).where(Answer.question_id == draft.question_id))
         source.author_url = ''
         await session.commit()

@@ -31,8 +31,12 @@ async def produce_task_images(session, broker, task, draft, settings):
         ImageVersion.image_draft_id == image_draft.id, ImageVersion.version == image_draft.current_version))
     if current.copy_state.get("article_version") != draft.current_version:
         raise ValueError("信息图对应的文章版本已变化，请重新生成当前文章的信息图")
-    if current.content_json.get('opinion_survey'):
-        await _set_progress(session, broker, task, stage="rendering_image", progress=98, message="正在用已核算的作者人数绘制观点统计图")
+    runtime = await configured_settings_copy(session, settings)
+    if runtime.ai_provider_mode == 'mock' or (current.content_json.get('opinion_survey') and current.content_json.get('visual_format') != 'editorial'):
+        if runtime.ai_provider_mode == 'mock':
+            current.content_json = {**current.content_json, 'mock_preview': True}
+            await session.commit()
+        await _set_progress(session, broker, task, stage="rendering_image", progress=98, message="正在渲染配图预览")
         await checkpoint(session, task, "image_render", lambda: render_image_workspace(session, image_draft, settings),
                          encode=lambda value: {"image_id": value.id, "version": value.current_version})
         await session.refresh(current)
@@ -47,7 +51,6 @@ async def produce_task_images(session, broker, task, draft, settings):
     current.workflow_mode = "codex_cli"
     current.content_json = {**current.content_json, "auto_fit": True}
     await session.commit()
-    runtime = await configured_settings_copy(session, settings)
     folder = REPOSITORY_ROOT / "data" / "generated" / task.id
     async def generate_background():
         try:

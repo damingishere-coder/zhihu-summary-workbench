@@ -276,12 +276,13 @@ async def generate_infographic_content_version(
         assert image_draft is not None
         current = await _current_version(session, image_draft)
         content = InfographicContentData(
-            title="回答作者的观点分布",
-            one_line_conclusion=f"{survey['collected_answers']} 条回答 · {survey['denominator']} 位可识别作者",
+            title=draft.title[:48],
+            one_line_conclusion=f"{survey['collected_answers']}条回答里的共同线索",
             source_cluster_ids=[row['cluster_id'] for row in survey['rows'][:16]],
             source_answer_ids=list(frozen.get('answers', {}))[:100],
         ).model_dump(mode='json')
-        content.update(opinion_survey=survey, question_title=draft.title)
+        content.update(opinion_survey=survey, question_title=draft.title,
+                       visual_format='editorial', editorial_article=draft.content)
         image_draft.status = "content_ready"
         await _append_version(session, image_draft,
             content_json=_editor_defaults(content, template_type=template_type, canvas_size=canvas_size),
@@ -397,6 +398,10 @@ async def generate_prompt_version(
         visual_style=visual_style,
         aspect_ratio=aspect_ratio,
     )
+    if current.content_json.get('visual_format') == 'editorial':
+        from backend.app.services.editorial_visual import editorial_art_prompt
+        prompt_zh = editorial_art_prompt(current.content_json['title'], draft.content)
+        prompt_en = prompt_zh
     next_content = {
         **current.content_json,
         "visual_style": visual_style,
@@ -451,6 +456,9 @@ async def update_infographic_version(
     if current.content_json.get('opinion_survey'):
         content_json['opinion_survey'] = current.content_json['opinion_survey']
         content_json['question_title'] = current.content_json.get('question_title', '')
+        if current.content_json.get('visual_format') == 'editorial':
+            content_json['visual_format'] = 'editorial'
+            content_json['editorial_article'] = current.content_json.get('editorial_article', '')
     await _append_version(
         session,
         image_draft,

@@ -2,23 +2,44 @@
 from __future__ import annotations
 
 from collections import defaultdict
+import re
 from typing import Any
 from urllib.parse import urlsplit
 
-from backend.app.schemas.analysis import ArticleParagraph
+from backend.app.schemas.analysis import ArticleGeneration, ArticleParagraph
 
 
 SURVEY_VERSION = 3
-SURVEY_INSTRUCTION = """本产品输出的是该问题下回答作者的观点调查汇总。不要以自己的身份解答原问题，
-不要推算题目中的行业数据或提出自己的解释。survey 是程序按作者主页去重得到的统计快照，
-人数、占比、分母只能引用 survey，点赞数、来源数和观点条数都不是人数。
-正文从‘## 回答里的共性’开始，再写‘## 主要分歧与少数观点’及‘## 这份样本能说明什么’。
-写清答主们重复表达的观点、理由、相同前提以及相反/有条件的态度，使用‘这些回答认为’等归纳口吻，
-涉及答主观点的段落关联实际 cluster_ids/source_answer_ids。不得把样本观点写成已经核实的客观事实。
-纯方法、样本局限和AI辅助披露段落使用 kind=disclosure，每段不超过200字；不要给方法说明虚构来源关联。
-采集范围及逐观点人数由程序在正文前统一插入，不要重复生成统计表，不使用虚构数字或未提供的百分比。
-无法识别身份的回答不计入作者人数；未分析/未归类不是反对；允许同一作者持多个观点，占比不必合计100%。
-只说明已采集样本，不宣称代表全体知乎用户。"""
+SHORT_ARTICLE_LIMIT = 500
+SURVEY_INSTRUCTION = """把同一知乎问题的回答高度汇聚成一篇有阅读吸引力的短文，而不是调查报告或逐项复述。
+标题不超过24字，正文目标300至380字。标题、正文及程序追加的样本说明合计不得超过500字。
+开头用来源中真实存在的矛盾、反差或具体问题吸引读者；接着用2至3个短段落串起核心发现，
+保留一个会改变理解的分歧或条件，结尾落在一个清晰洞察。禁止夸张标题、虚构亲历和制造共识。
+不使用编号章节、统计表、作者名单、逐方向罗列或大段方法说明；不要求把所有观点写进短文。
+最多选2至3个最有解释力的人数作为叙事支点。人数和占比只能取自survey，不能用点赞数代替人数。
+每个内容段关联真实cluster_ids/source_answer_ids；段落content按顺序拼起来应与正文一致。
+归纳答主的观点，不以AI身份解答行业问题、不把样本解释当成核实后的事实。
+完整统计、作者分组及采集边界留在来源附件，不写进正文。程序会追加简短样本和AI说明，无须重复。
+同一作者可以持多个观点，未归类不等于反对，只代表已采集样本。"""
+
+
+def article_length(title: str, content: str) -> int:
+    """Count punctuation and digits too; whitespace alone is not reading copy."""
+    return len(re.sub(r"\s+", "", title + content))
+
+
+def finalize_short_article(article: ArticleGeneration, survey: dict[str, Any]) -> ArticleGeneration:
+    paragraphs = [p for p in article.paragraphs if p.kind == 'content']
+    if not paragraphs:
+        raise ValueError('短文缺少有来源的正文段落')
+    notice = (f"样本：保存{survey['collected_answers']}条、分析{survey['analyzed_answers']}条，"
+              f"以{survey['denominator']}位可识别作者计数；观点可重叠，仅代表样本。AI辅助整理，待审核。")
+    paragraphs.append(ArticleParagraph(paragraph_id='sample_note', kind='disclosure', content=notice))
+    content = '\n\n'.join(p.content for p in paragraphs)
+    count = article_length(article.title, content)
+    if count > SHORT_ARTICLE_LIMIT:
+        raise ValueError(f'短文共{count}字，超过500字上限；请压缩核心发现，不能截断来源或结论')
+    return ArticleGeneration(title=article.title, content=content, paragraphs=paragraphs)
 
 
 def author_key(url: str) -> str | None:

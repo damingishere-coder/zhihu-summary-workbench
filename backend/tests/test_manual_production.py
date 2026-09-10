@@ -124,7 +124,8 @@ async def test_small_available_sample_continues_only_after_bounded_scroll_stop(a
     if stop_reason:
         assert task["result"]["images_complete"]
         draft = (await client.get(f"/api/drafts/{task['result']['draft_id']}")).json()
-        assert "按本次可获取的最多回答完成采集" in draft["content"]
+        assert draft['analysis_snapshot']['capture']['stop_reason'] == 'no_progress'
+        assert '仅代表样本' in draft['content']
 
 
 def test_long_answer_chunks_include_the_tail():
@@ -157,11 +158,9 @@ async def test_uncertain_image_is_reconciled_without_new_submission(tmp_path, mo
 async def test_mock_pipeline_produces_rendered_package_and_rejects_stale_article(app_client, tmp_path, monkeypatch):
     _, client, broker = app_client
     info = await queued_fixture(client, broker)
-    # Test images are explicitly mocked; the renderer and ZIP use real file bytes.
-    image = tmp_path / "background.png"
-    Image.new("RGB", (1080, 1440), "#f3f5f9").save(image)
+    # Mock mode must render locally without submitting any real image request.
     async def fake_generate(self, prompt, folder):
-        return {"path": str(image), "sha256": hashlib.sha256(image.read_bytes()).hexdigest()}
+        raise AssertionError('Mock mode must never submit real image generation')
     monkeypatch.setattr(CodexImageProvider, "generate", fake_generate)
     async with get_session_factory()() as session:
         task = await session.get(TaskJob, info["id"])

@@ -140,7 +140,12 @@ async def test_real_minimum_task_flow_with_mock_provider(app_client) -> None:
     assert draft_response.status_code == 200
     draft = draft_response.json()
     assert draft["status"] == "waiting_review"
-    assert "多回答综合总结" in draft["title"]
+    from backend.app.services.opinion_survey import article_length
+    assert draft['title'] and article_length(draft['title'], draft['content']) <= 500
+    too_long = await client.patch(f"/api/drafts/{draft['id']}", json={'title': '短文', 'content': '字' * 500})
+    assert too_long.status_code == 422
+    unchanged = (await client.get(f"/api/drafts/{draft['id']}")).json()
+    assert unchanged['current_version'] == draft['current_version']
     assert draft["paragraph_sources"]
     assert draft["review_result"]["requires_human_review"] is True
 

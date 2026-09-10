@@ -302,6 +302,16 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
             )
 
         if output_schema is ArticleGeneration:
+            if payload.get('survey'):
+                rows = payload['survey']['rows'][:2]
+                paragraphs = [ArticleParagraph(paragraph_id=f'p{i}',
+                    content=f"{row['endorsement_count']}位作者认同：{row['name']}。",
+                    cluster_ids=[row['cluster_id']],
+                    source_answer_ids=[e['answer_id'] for e in row['evidence']]) for i, row in enumerate(rows)]
+                if not paragraphs:
+                    paragraphs = [ArticleParagraph(paragraph_id='p0', content='已保存的回答尚未形成明确的共同观点。',
+                        source_answer_ids=list(payload.get('source_answers', {})))]
+                return ArticleGeneration(title='回答里有哪些共同线索？', content='\n\n'.join(p.content for p in paragraphs), paragraphs=paragraphs)
             opinion = payload.get("opinion_map")
             if not isinstance(opinion, dict):
                 opinion = {}
