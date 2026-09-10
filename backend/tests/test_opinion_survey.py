@@ -71,6 +71,25 @@ def test_background_does_not_dilute_support_and_conditions_are_counted_explicitl
     assert '认同 2 人（66.7%）' in survey_paragraphs(survey, ['1', '2', '3'])[1].content
 
 
+def test_unclassified_audit_distinguishes_analyzed_excluded_and_same_names():
+    sources = [answer('1', 'a'), answer('2', 'a', False), answer('3', 'b', False),
+               answer('4', 'c'), answer('5', 'd')]
+    survey = build_survey(sources, [cluster('c', {'1': 'related', '4': 'supports', '5': 'opposes'})])
+    records = survey['unclassified_author_records']
+    assert survey['unclassified_authors'] == 2
+    assert records == [
+        {'author_key': 'people/a', 'author_name': '同名用户', 'answer_ids': ['1', '2'],
+         'analyzed_answer_ids': ['1'], 'excluded_answer_ids': ['2']},
+        {'author_key': 'people/b', 'author_name': '同名用户', 'answer_ids': ['3'],
+         'analyzed_answer_ids': [], 'excluded_answer_ids': ['3']},
+    ]
+    paragraphs = survey_paragraphs(survey, ['1', '2', '3', '4', '5'])
+    assert '有条件认同 0 人' not in paragraphs[1].content
+    assert '已分析但未判定明确态度 1 位' in paragraphs[-1].content
+    assert '未参与观点分析 1 位' in paragraphs[-1].content
+    assert set(paragraphs[-1].source_answer_ids) == {'1', '2', '3'}
+
+
 @pytest.mark.asyncio
 async def test_reassessment_keeps_short_views_and_preserves_manual_exclusions(app_client):
     from backend.app.db.session import get_session_factory

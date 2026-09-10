@@ -951,6 +951,8 @@ async def generate_article(
     task: TaskJob | None = None,
     feedback: list[str] | None = None,
 ) -> tuple[ArticleDraft, ArticleGeneration]:
+    if feedback is None and task:
+        feedback = task.result.get('survey_review_feedback')
     from backend.app.services.opinion_survey import build_survey, survey_paragraphs, SURVEY_INSTRUCTION
     from backend.app.services.survey_stances import ensure_survey_stances
     await ensure_survey_stances(session, question, settings, task=task)

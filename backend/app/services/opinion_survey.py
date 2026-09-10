@@ -8,7 +8,7 @@ from urllib.parse import urlsplit
 from backend.app.schemas.analysis import ArticleParagraph
 
 
-SURVEY_VERSION = 2
+SURVEY_VERSION = 3
 SURVEY_INSTRUCTION = """本产品输出的是该问题下回答作者的观点调查汇总。不要以自己的身份解答原问题，
 不要推算题目中的行业数据或提出自己的解释。survey 是程序按作者主页去重得到的统计快照，
 人数、占比、分母只能引用 survey，点赞数、来源数和观点条数都不是人数。
@@ -84,12 +84,21 @@ def build_survey(answers: list[dict[str, Any]], clusters: list[dict[str, Any]]) 
                      'author_groups': {k: sorted(v) for k, v in groups.items()},
                      'unidentified_answer_count': len(unknown), 'evidence': evidence})
     rows.sort(key=lambda row: (-row['endorsement_count'], -sum(row['counts'].values()), row['cluster_id']))
+    unclassified_records = []
+    for identity in sorted(authors - classified):
+        sources = [a for aid, a in answers_by_id.items() if identities[aid] == identity]
+        unclassified_records.append({'author_key': identity,
+            'author_name': sources[0].get('author_name', '匿名用户'),
+            'answer_ids': sorted(str(a['id']) for a in sources),
+            'analyzed_answer_ids': sorted(str(a['id']) for a in sources if a.get('included_for_analysis')),
+            'excluded_answer_ids': sorted(str(a['id']) for a in sources if not a.get('included_for_analysis'))})
     return {'version': SURVEY_VERSION, 'unit': 'identified_author', 'denominator': denominator,
             'collected_answers': len(answers_by_id),
             'analyzed_answers': sum(bool(a.get('included_for_analysis')) for a in answers_by_id.values()),
             'unidentified_answers': sum(value is None for value in identities.values()),
-            'unclassified_authors': len(authors - classified), 'rows': rows,
-            'method': '按公开作者主页去重，同一观点每位作者只计一次。认同人数为明确支持与有条件认同之和；认同与反对并存记为混合态度，单独列出。多观点可重叠，占比不必合计100%。未归类不等于反对。'}
+            'unclassified_authors': len(authors - classified),
+            'unclassified_author_records': unclassified_records, 'rows': rows,
+            'method': '按公开作者主页去重，同一观点每位作者只计一次。认同人数为明确支持与有条件认同之和；认同与反对并存记为混合态度，单独列出。命题本身带条件不等于作者有保留；作者明确保留认同条件时单列。多观点可重叠，占比不必合计100%。未归类不等于反对。'}
 
 
 def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[ArticleParagraph]:
@@ -103,8 +112,9 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
         counts = row['counts']
         percent = f"{row['endorsement_percent']:.1f}%" if n else '无法计算'
         heading = '\n## 各观点有多少人\n' if index == 0 else ''
-        content = (f"{heading}- {row['name']}：认同 {row['endorsement_count']} 人（{percent}），"
-                   f"其中明确支持 {counts['supports']} 人、有条件认同 {counts['conditional']} 人")
+        content = f"{heading}- {row['name']}：认同 {row['endorsement_count']} 人（{percent}）"
+        if counts['conditional']:
+            content += f"，其中明确支持 {counts['supports']} 人、有条件认同 {counts['conditional']} 人"
         for key, label in [('opposes', '反对'), ('mixed', '混合态度'), ('related', '仅相关提及')]:
             if counts[key]:
                 content += f"；{label} {counts[key]} 人"
@@ -113,4 +123,14 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
         content += '。'
         result.append(ArticleParagraph(paragraph_id=f'survey_{index}', content=content,
                      cluster_ids=[row['cluster_id']], source_answer_ids=[a['answer_id'] for a in row['evidence']]))
+    unclassified = survey.get('unclassified_author_records', [])
+    if unclassified:
+        analyzed = [a for a in unclassified if a['analyzed_answer_ids']]
+        excluded = [a for a in unclassified if not a['analyzed_answer_ids']]
+        names = lambda rows: '、'.join(a['author_name'] for a in rows) or '无'
+        result.append(ArticleParagraph(paragraph_id='survey_unclassified',
+            content=(f"## 未判定明确态度的作者\n已分析但未判定明确态度 {len(analyzed)} 位：{names(analyzed)}。"
+                     f"\n未参与观点分析 {len(excluded)} 位：{names(excluded)}。上述两组均计入已保存作者分母，均不视为反对者；"
+                     "同名作者按各自主页区分，回答 ID 与分析状态随统计快照保存。"),
+            source_answer_ids=[aid for a in unclassified for aid in a['answer_ids']]))
     return result
