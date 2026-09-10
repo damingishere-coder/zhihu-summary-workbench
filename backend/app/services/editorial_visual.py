@@ -4,6 +4,8 @@ from html import escape
 
 def editorial_visual_html(payload: dict, width: int, height: int, background: str) -> str:
     title = escape(str(payload.get('title') or '回答里的共同线索'))
+    if len(title) > 12:
+        title = title.replace('，', '，<br>', 1)
     survey = payload.get('opinion_survey', {})
     sample = survey.get('collected_answers', 0)
     picture = f'<img class="art" alt="主题插画" src="{escape(background, quote=True)}">' if background else ''
@@ -14,11 +16,10 @@ def editorial_visual_html(payload: dict, width: int, height: int, background: st
     .art{{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}}
     header{{position:relative;padding:65px 70px 0;max-width:100%}}
     .kicker{{font-size:25px;letter-spacing:3px;font-weight:600;color:#886447}}
-    h1{{font-size:78px;line-height:1.35;max-width:900px;margin:26px 0 0;overflow-wrap:anywhere;letter-spacing:-2px}}
-    .rule{{width:68px;height:8px;background:#cb622f;margin-top:30px}}
+    h1{{font-size:78px;line-height:1.5;max-width:900px;margin:26px 0 0;padding:4px 0 8px;overflow-wrap:anywhere;letter-spacing:-2px}}
     .footer{{position:absolute;bottom:14px;left:0;right:0;background:#f5efdf;padding:14px 70px 20px;font-size:21px;color:#635f51}}
     </style><main class="canvas">{picture}<header><div class="kicker safe-text" data-field="样本">{sample} 条回答 · 一个值得想的问题</div>
-    <h1 class="safe-text" data-field="标题">{title}</h1><div class="rule"></div></header>
+    <h1 class="safe-text" data-field="标题">{title}</h1></header>
     <div class="footer">{footer}</div></main></html>'''
 
 
