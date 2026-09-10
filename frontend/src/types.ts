@@ -282,7 +282,7 @@ export interface ImageVersion {
     background_position_y?: number;
     background_scale?: number;
     opinion_survey?: Record<string, unknown>;
-    visual_format?: "editorial";
+    visual_format?: "editorial" | "focused_statistics";
   };
   prompt_zh: string;
   prompt_en: string;

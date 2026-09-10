@@ -448,12 +448,12 @@ export function ImagePromptWorkspace({
       <div className="section-heading">
         <div>
           <h2>配图</h2>
-          <p>{current?.content_json.visual_format === "editorial" ? "用一个画面，帮助读者理解短文的核心。" : "检查成图与文案，也可以替换背景或调整版式。"}</p>
+          <p>{current?.content_json.visual_format === "focused_statistics" ? "用人数与条形长度，直观看懂回答中的主要观点。" : current?.content_json.visual_format === "editorial" ? "用一个画面，帮助读者理解短文的核心。" : "检查成图与文案，也可以替换背景或调整版式。"}</p>
         </div>
         {workspace && <Tag color="blue">v{workspace.current_version}</Tag>}
       </div>
       <p className="image-workflow-note">
-        {current?.content_json.visual_format === "editorial" ? "完整统计在文章的来源面板中；配图只突出一个主题。" : "今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。"}
+        {current?.content_json.visual_format === "focused_statistics" ? "展示认同人数最多的五个观点；数据来自文章同一版本，完整统计见来源面板。" : current?.content_json.visual_format === "editorial" ? "完整统计在文章的来源面板中；配图只突出一个主题。" : "今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。"}
       </p>
       {query.isLoading && <p role="status">正在读取配图…</p>}
       {query.isError && (

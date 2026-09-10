@@ -282,14 +282,12 @@ async def generate_infographic_content_version(
             source_answer_ids=list(frozen.get('answers', {}))[:100],
         ).model_dump(mode='json')
         content.update(opinion_survey=survey, question_title=draft.title,
-                       visual_format='editorial', editorial_article=draft.content)
+                       visual_format='focused_statistics')
         image_draft.status = "content_ready"
         await _append_version(session, image_draft,
             content_json=_editor_defaults(content, template_type=template_type, canvas_size=canvas_size),
             copy_state={"article_version": draft.current_version},
-            prompt_zh=current.prompt_zh if current else '', prompt_en=current.prompt_en if current else '',
-            background_path=current.background_path if current else None,
-            thumbnail_path=current.thumbnail_path if current else None)
+            prompt_zh='', prompt_en='', background_path=None, thumbnail_path=None)
         await session.commit()
         return await workspace_to_read(session, image_draft)
     opinion = await session.scalar(
@@ -402,6 +400,9 @@ async def generate_prompt_version(
         from backend.app.services.editorial_visual import editorial_art_prompt
         prompt_zh = editorial_art_prompt(current.content_json['title'], draft.content)
         prompt_en = prompt_zh
+    elif current.content_json.get('visual_format') == 'focused_statistics':
+        prompt_zh = '从文章冻结的作者统计中，按认同人数排序绘制前五项横向条形图。零起点，标注人数、作者占比与观点重叠口径；程序直接绘制，不调用 AI 生图。'
+        prompt_en = prompt_zh
     next_content = {
         **current.content_json,
         "visual_style": visual_style,
@@ -456,8 +457,8 @@ async def update_infographic_version(
     if current.content_json.get('opinion_survey'):
         content_json['opinion_survey'] = current.content_json['opinion_survey']
         content_json['question_title'] = current.content_json.get('question_title', '')
-        if current.content_json.get('visual_format') == 'editorial':
-            content_json['visual_format'] = 'editorial'
+        if current.content_json.get('visual_format') in ('editorial', 'focused_statistics'):
+            content_json['visual_format'] = current.content_json['visual_format']
             content_json['editorial_article'] = current.content_json.get('editorial_article', '')
     await _append_version(
         session,

@@ -115,6 +115,9 @@ def _background_data(version: ImageVersion, use_css: bool) -> str:
 def build_infographic_html(
     image_draft: ImageDraft, version: ImageVersion
 ) -> str:
+    if version.content_json.get('visual_format') == 'focused_statistics':
+        from backend.app.services.focused_survey_chart import focused_survey_chart_html
+        return focused_survey_chart_html(version.content_json, version.canvas_width, version.canvas_height)
     if version.content_json.get('visual_format') == 'editorial':
         from backend.app.services.editorial_visual import editorial_visual_html
         return editorial_visual_html(version.content_json, version.canvas_width, version.canvas_height,
@@ -376,7 +379,7 @@ async def render_infographic(
     version: ImageVersion,
     settings: Settings,
 ) -> None:
-    if version.content_json.get('opinion_survey') and version.content_json.get('visual_format') != 'editorial':
+    if version.content_json.get('opinion_survey') and version.content_json.get('visual_format') not in ('editorial', 'focused_statistics'):
         rows = version.content_json['opinion_survey']['rows'][:12]
         version.canvas_height = max(version.canvas_height, 1100 + len(rows) * 185)
     html_payload = build_infographic_html(image_draft, version)
@@ -438,11 +441,13 @@ async def render_infographic(
                           }))""",
                     )
                     boundary_overflow = await page.eval_on_selector_all(
-                        ".safe-text, .footer",
+                        ".safe-text, .footer, .chart text",
                         """elements => elements.filter(item => {
                           const box = item.getBoundingClientRect();
                           const canvas = document.querySelector('.canvas').getBoundingClientRect();
-                          return box.bottom > canvas.bottom - 12 || box.right > canvas.right || box.left < canvas.left;
+                          const foot = document.querySelector('.foot');
+                          const chartOverlap = item.closest('.chart') && foot && box.bottom > foot.getBoundingClientRect().top - 15;
+                          return chartOverlap || box.bottom > canvas.bottom - 12 || box.right > canvas.right || box.left < canvas.left;
                         }).map(item => ({field: item.dataset.field || '画布边界', text: (item.textContent || '').slice(0,120)}))""",
                     )
                     overflow.extend(boundary_overflow)
