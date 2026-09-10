@@ -50,7 +50,7 @@ class SettingsUpdate(BaseModel):
     manual_question_quota: int | None = Field(default=None, ge=0, le=100)
     max_answers_per_question: int | None = Field(default=None, ge=1, le=500)
     max_ai_concurrency: int | None = Field(default=None, ge=1, le=20)
-    request_timeout_seconds: int | None = Field(default=None, ge=5, le=600)
+    request_timeout_seconds: int | None = Field(default=None, ge=5, le=1800)
     daily_plan_time: str | None = Field(
         default=None, pattern=r"^(?:[01]\d|2[0-3]):[0-5]\d$"
     )

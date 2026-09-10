@@ -45,7 +45,7 @@ class Settings(BaseSettings):
     answer_quality_batch_size: int = 8
     claim_extraction_batch_size: int = 5
     cluster_similarity_threshold: float = 0.35
-    article_target_length: int = 1800
+    article_target_length: int = 380
     deepseek_input_cost_per_million: float = 0
     deepseek_output_cost_per_million: float = 0
     daily_model_budget: float = 0

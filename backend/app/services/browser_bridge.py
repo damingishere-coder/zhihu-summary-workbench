@@ -415,8 +415,8 @@ class BrowserBridgeManager:
                 client = await session.get(BrowserBridgeClient, connection.client_id)
                 if client and client.zhihu_auth in {"login_required", "verification_required"}:
                     return None
-                if current.request_json.get("chunked") and client and client.extension_version not in {"0.3.0", "0.3.1"}:
-                    current.error_message = "请重新加载知乎工作台扩展 0.3.0，旧版不支持分批持久采集"
+                if current.request_json.get("chunked") and client and client.extension_version not in {"0.3.0", "0.3.1", "0.3.2", "0.3.3", "0.3.4"}:
+                    current.error_message = "请重新加载当前版本的知乎工作台扩展，旧版不支持分批持久采集"
                     if task:
                         task.error_message = current.error_message
                     await session.commit()

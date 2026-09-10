@@ -22,6 +22,7 @@ export type CaptureAttempt = {
   collected_answer_count: number;
   diagnostics: CaptureDiagnostic[];
   reached_end?: boolean;
+  stop_reason?: string;
 };
 
 export type PageCollectResult =
@@ -67,14 +68,6 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     : "rendered_dom";
   const answerLimit = Math.max(1, Math.min(Number(request.max_answers) || 20, 500));
   const normalizeText = (value: string) => value.replace(/\s+/g, " ").trim();
-  const contentHash = (value: string) => {
-    let hash = 2_166_136_261;
-    for (let index = 0; index < value.length; index += 1) {
-      hash ^= value.charCodeAt(index);
-      hash = Math.imul(hash, 16_777_619);
-    }
-    return `${value.length}:${(hash >>> 0).toString(16)}`;
-  };
   const diagnostic = (code: string, level: CaptureDiagnostic["level"], message: string) => {
     if (!diagnostics.some((item) => item.code === code && item.message === message)) {
       diagnostics.push({ code, level, message });
@@ -281,13 +274,14 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
   const knownIds = new Set(request.known_answer_ids || []);
   const answersById = new Map<string, Record<string, unknown>>();
   const seenUrls = new Set<string>();
-  const seenContentHashes = new Set<string>();
   let visibleAnswerCount = 0;
   let expandedCount = 0;
   const maxRounds = Math.max(1, Math.min(Number(request.max_scroll_rounds ?? 8), 20));
   const scrollDelay = Math.max(0, Math.min(Number(request.scroll_delay_ms ?? 1200), 2_000));
   let stagnantRounds = 0;
   let previousVisible = -1;
+  let scrollRetriggers = 0;
+  let stoppedForNoProgress = false;
 
   const answerCards = () => {
     const cards = new Set<HTMLElement>();
@@ -323,11 +317,10 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     const plainContent = normalizeText(contentElement?.textContent || "");
     if (!/^\d+$/.test(id) || !content || !plainContent) return null;
     const answerUrl = `https://www.zhihu.com/question/${questionId}/answer/${id}`;
-    const plainContentHash = contentHash(plainContent);
     if (knownIds.has(id)) return null;
     const previous = answersById.get(id);
     if (previous && String(previous.content).length >= content.length) return null;
-    if (!previous && (seenUrls.has(answerUrl) || seenContentHashes.has(plainContentHash))) return null;
+    if (!previous && seenUrls.has(answerUrl)) return null;
     if ([...card.querySelectorAll("button, [role='button']")].some((button) => /展开阅读全文|展开全部|继续阅读/.test(normalizeText(button.textContent || "")))) return null;
     const authorLink = queryFirst(card, [".AuthorInfo-name a", ".UserLink-link", "a[href*='/people/']"]);
     const authorName = normalizeText(
@@ -343,7 +336,6 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
       || card.querySelector("time")?.getAttribute("datetime");
     const updated = card.querySelector("meta[itemprop='dateModified']")?.getAttribute("content") || created;
     seenUrls.add(answerUrl);
-    seenContentHashes.add(plainContentHash);
     return {
       id,
       question_id: questionId,
@@ -390,8 +382,22 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     if (answersById.size === previousVisible) stagnantRounds += 1;
     else stagnantRounds = 0;
     previousVisible = answersById.size;
-    if (stagnantRounds >= 2) break;
-    window.scrollTo({ top: document.documentElement.scrollHeight, behavior: "auto" });
+    if (stagnantRounds >= 3) {
+      stoppedForNoProgress = true;
+      break;
+    }
+    const pageHeight = Math.max(document.documentElement.scrollHeight, document.body?.scrollHeight || 0);
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight || 800;
+    const bottom = Math.max(0, pageHeight - viewportHeight);
+    const currentTop = window.scrollY || document.scrollingElement?.scrollTop || 0;
+    if (bottom > 0 && currentTop >= bottom - 4) {
+      // A second scroll to the same bottom does not re-enter the lazy-load trigger.
+      // Leave the bottom first, then scroll down again as a reader would.
+      window.scrollTo({ top: Math.max(0, bottom - Math.max(240, viewportHeight * 0.75)), behavior: "auto" });
+      await new Promise((resolve) => window.setTimeout(resolve, Math.min(scrollDelay, 300)));
+      scrollRetriggers += 1;
+    }
+    window.scrollTo({ top: pageHeight, behavior: "auto" });
     await new Promise((resolve) => window.setTimeout(resolve, scrollDelay));
   }
 
@@ -411,6 +417,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
     };
   }
   if (expandedCount) diagnostic("answers_expanded", "info", `自动展开了 ${expandedCount} 个回答正文`);
+  if (scrollRetriggers) diagnostic("scroll_retrigger", "info", `已执行 ${scrollRetriggers} 次向上回滑再下滑，重新触发后续回答加载`);
   diagnostic("dom_capture", "info", `从当前可见页面采集 ${answers.length} 条回答`);
   const warnings: string[] = [];
   if (answers.length < answerLimit) {
@@ -426,6 +433,7 @@ export async function collectInPage(request: CollectRequest): Promise<PageCollec
   const capture = captureAttempt(visibleAnswerCount, answers.length);
   const endMarkers = [...document.querySelectorAll(".List-footer, .List-end, .EmptyState, [data-za-detail-view-element_name='ListEnd']")];
   capture.reached_end = endMarkers.some((el) => /没有更多|已显示全部|没有更多回答|已经到底/.test(el.textContent || ""));
+  capture.stop_reason = capture.reached_end ? "page_end" : stoppedForNoProgress ? "no_progress" : "";
   return {
     kind: "completed",
     bundle: {

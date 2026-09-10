@@ -124,6 +124,19 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
         self, output_schema: type[T], user_prompt: str
     ) -> BaseModel:
         payload = self._input_payload(user_prompt)
+        from backend.app.services.survey_stances import SurveyStanceMatrix
+        if output_schema is SurveyStanceMatrix:
+            directions = payload.get("directions", [])
+            items = []
+            for answer in payload.get("answers", []):
+                content = str(answer["content"])
+                # Deterministic demo behavior: only literal direction matches count.
+                matches = [str(d["viewpoint"]) in content for d in directions]
+                items.append({"answer_id": answer["id"],
+                    "relations": ["supports" if match else "not_mentioned" for match in matches],
+                    "evidence": [str(d["viewpoint"])[:300] if match else ""
+                        for d, match in zip(directions, matches, strict=True)]})
+            return SurveyStanceMatrix.model_validate({"answers": items})
         if output_schema is AnswerQualityBatch:
             items: list[AnswerQualityItem] = []
             for answer in payload.get("answers", []):
@@ -289,6 +302,16 @@ class MockProvider(TextGenerationProvider, StructuredOutputProvider):
             )
 
         if output_schema is ArticleGeneration:
+            if payload.get('survey'):
+                rows = payload['survey']['rows'][:2]
+                paragraphs = [ArticleParagraph(paragraph_id=f'p{i}',
+                    content=f"{row['endorsement_count']}位作者认同：{row['name']}。",
+                    cluster_ids=[row['cluster_id']],
+                    source_answer_ids=[e['answer_id'] for e in row['evidence']]) for i, row in enumerate(rows)]
+                if not paragraphs:
+                    paragraphs = [ArticleParagraph(paragraph_id='p0', content='已保存的回答尚未形成明确的共同观点。',
+                        source_answer_ids=list(payload.get('source_answers', {})))]
+                return ArticleGeneration(title='回答里有哪些共同线索？', content='\n\n'.join(p.content for p in paragraphs), paragraphs=paragraphs)
             opinion = payload.get("opinion_map")
             if not isinstance(opinion, dict):
                 opinion = {}

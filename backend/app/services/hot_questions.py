@@ -51,6 +51,7 @@ async def sync_hot_questions(session, *, limit: int = 30) -> dict[str, Any]:
         entries = [HotEntry.model_validate(row) for row in raw]
         created = updated = 0
         seen: set[str] = set()
+        live_ids: set[str] = set()
         for entry in entries[:limit]:
             if entry.id in seen:
                 continue
@@ -64,8 +65,14 @@ async def sync_hot_questions(session, *, limit: int = 30) -> dict[str, Any]:
                 updated += 1
             question.title = entry.title
             question.hot_rank = entry.rank
+            live_ids.add(question.id)
             from backend.app.models.common import utc_now
             question.fetched_at = utc_now()
+        # The rank means this successful hot-list snapshot, not yesterday's rank.
+        if live_ids:
+            for previous in (await session.scalars(select(Question).where(Question.source == 'hot', Question.hot_rank.is_not(None)))).all():
+                if previous.id not in live_ids:
+                    previous.hot_rank = None
         await session.commit()
         return {"fetched": len(seen), "created": created, "updated": updated, "collector_mode": "chrome_extension", "warnings": []}
     except (TimeoutError, ValueError, RuntimeError) as exc:

@@ -37,6 +37,8 @@ import { StatusTag } from "../components/StatusTag";
 import type { ParagraphSource } from "../types";
 import { formatDateTime } from "../utils/format";
 
+const stanceNames: Record<string, string> = { supports: "支持", conditional: "有条件认同", opposes: "反对", mixed: "混合态度", related: "仅相关提及" };
+
 function MarkdownPreview({ content }: { content: string }) {
   return (
     <article className="markdown-preview">
@@ -555,10 +557,10 @@ function DraftWorkspace() {
           <div className="section-heading">
             <div>
               <h2>文章</h2>
-              <p>先通读，再打磨。修改后保存为新版本。</p>
+              <p>高度归纳，500字以内 · 当前 {Array.from((title + content).replace(/\s/g, "")).length}/500 字</p>
             </div>
             <Space wrap>
-              <Button onClick={() => setSourcesOpen(true)}>查看来源</Button>
+              <Button onClick={() => setSourcesOpen(true)}>来源与完整统计</Button>
               <Button onClick={() => setEditorMode("versions")}>
                 历史版本
               </Button>
@@ -799,7 +801,7 @@ function DraftWorkspace() {
           <div className="coverage-summary">
             <h3>来源与采集范围</h3>
             <p>
-              {draft.content
+              {draft.analysis_snapshot.opinion_survey ? `保存 ${draft.analysis_snapshot.opinion_survey.collected_answers} 条回答，分析 ${draft.analysis_snapshot.opinion_survey.analyzed_answers} 条。${draft.analysis_snapshot.capture?.stop_reason === "no_progress" ? "连续三轮无新增后停止，未确认覆盖全部回答。" : "仅代表已采集样本。"}` : draft.content
                 .split("\n")
                 .find((line) => line.includes("采集范围："))
                 ?.replace(/^>\s*/, "") ||
@@ -835,12 +837,26 @@ function DraftWorkspace() {
         )}
       </footer>
       <Drawer
-        title="段落来源"
+        title="来源与完整统计"
         size="min(560px, 94vw)"
         open={sourcesOpen}
         onClose={() => setSourcesOpen(false)}
       >
-        {" "}
+        {draft.analysis_snapshot.opinion_survey && (
+          <details style={{ marginBottom: 24 }}>
+            <summary>完整观点统计（{draft.analysis_snapshot.opinion_survey.rows.length} 项）</summary>
+            <p>保存 {draft.analysis_snapshot.opinion_survey.collected_answers} 条，分析 {draft.analysis_snapshot.opinion_survey.analyzed_answers} 条；分母 {draft.analysis_snapshot.opinion_survey.denominator} 位作者。未判定态度 {draft.analysis_snapshot.opinion_survey.unclassified_authors} 位。</p>
+            <p>{draft.analysis_snapshot.opinion_survey.method}</p>
+            {draft.analysis_snapshot.capture?.stop_reason === "no_progress" && <p>采集停止原因：连续三轮回滑无新增；保留当时可访问的回答，未确认覆盖全部回答。</p>}
+            {draft.analysis_snapshot.opinion_survey.rows.map(row => (
+              <details key={row.cluster_id} style={{ padding: "10px 0", borderBottom: "1px solid var(--border-color, #ddd)" }}>
+                <summary>{row.name} · 认同 {row.endorsement_count} 人（{row.endorsement_percent ?? "未知"}%）</summary>
+                <p>反对 {row.counts.opposes} · 混合 {row.counts.mixed} · 仅相关提及 {row.counts.related}</p>
+                {row.evidence.map(e => <p key={e.answer_id}><a href={e.answer_url} target="_blank" rel="noreferrer">{e.author_name}</a> · {stanceNames[e.relation] ?? e.relation}<br />{e.quote}</p>)}
+              </details>
+            ))}
+          </details>
+        )}
         <h3>段落来源</h3>
         {Object.keys(groupedSources).length ? (
           <Collapse

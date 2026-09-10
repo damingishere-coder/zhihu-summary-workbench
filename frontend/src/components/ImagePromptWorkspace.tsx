@@ -134,6 +134,9 @@ function InfographicPreview({
   footer,
   backgroundUrl,
   cssMode,
+  survey = false,
+  editorial = false,
+  renderedUrl,
 }: {
   content: InfographicContent;
   template: "knowledge_card" | "comparison_table";
@@ -142,7 +145,19 @@ function InfographicPreview({
   footer: string;
   backgroundUrl: string | null;
   cssMode: boolean;
+  survey?: boolean;
+  editorial?: boolean;
+  renderedUrl?: string | null;
 }) {
+  if (survey) {
+    return renderedUrl ? (
+      <figure style={{ margin: 0 }} aria-label="配图预览">
+        <img src={renderedUrl} alt={editorial ? "文章主题配图" : "按回答作者统计的观点分布图"}
+          style={{ display: "block", width: "100%", height: "auto", borderRadius: 12 }} />
+        <figcaption>当前文章版本的配图，预览与下载 PNG 一致。</figcaption>
+      </figure>
+    ) : <p role="status">配图尚未渲染，完成后在这里显示。</p>;
+  }
   return (
     <div
       className={`infographic-preview infographic-preview--${template}`}
@@ -433,12 +448,12 @@ export function ImagePromptWorkspace({
       <div className="section-heading">
         <div>
           <h2>配图</h2>
-          <p>检查成图与文案，也可以替换背景或调整版式。</p>
+          <p>{current?.content_json.visual_format === "focused_statistics" ? "用人数与条形长度，直观看懂回答中的主要观点。" : current?.content_json.visual_format === "editorial" ? "用一个画面，帮助读者理解短文的核心。" : "检查成图与文案，也可以替换背景或调整版式。"}</p>
         </div>
         {workspace && <Tag color="blue">v{workspace.current_version}</Tag>}
       </div>
       <p className="image-workflow-note">
-        今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。
+        {current?.content_json.visual_format === "focused_statistics" ? "展示认同人数最多的五个观点；数据来自文章同一版本，完整统计见来源面板。" : current?.content_json.visual_format === "editorial" ? "完整统计在文章的来源面板中；配图只突出一个主题。" : "今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。"}
       </p>
       {query.isLoading && <p role="status">正在读取配图…</p>}
       {query.isError && (
@@ -495,12 +510,15 @@ export function ImagePromptWorkspace({
               footer={footer}
               backgroundUrl={current.thumbnail_url ?? current.background_url}
               cssMode={workspace?.use_css_background ?? true}
+              survey={Boolean(current.content_json.opinion_survey)}
+              editorial={current.content_json.visual_format === "editorial"}
+              renderedUrl={current.rendered_url}
             />
             <div className="image-workspace-summary">
               <span>
-                {template === "knowledge_card" ? "知识总结卡" : "观点对比表"}
+                {current.content_json.visual_format === "editorial" ? "主题配图" : current.content_json.opinion_survey ? "作者观点统计图" : template === "knowledge_card" ? "知识总结卡" : "观点对比表"}
               </span>
-              <span>{contentCount} 个内容点</span>
+              {!current.content_json.opinion_survey && <span>{contentCount} 个内容点</span>}
               <Tag
                 color={
                   current.render_status === "rendered" ? "success" : "default"
@@ -956,6 +974,9 @@ export function ImagePromptWorkspace({
                   footer={footer}
                   backgroundUrl={current.background_url}
                   cssMode={workspace.use_css_background}
+                  survey={Boolean(current.content_json.opinion_survey)}
+                  editorial={current.content_json.visual_format === "editorial"}
+                  renderedUrl={current.rendered_url}
                 />
                 {current.render_log.length > 0 && (
                   <Alert

@@ -22,7 +22,7 @@ async def produce_task_images(session, broker, task, draft, settings):
     from backend.app.services.tasks import _set_progress
     # ORM drafts recovered from a checkpoint may not have their relationship loaded.
     await session.refresh(draft, ["question"])
-    await _set_progress(session, broker, task, stage="generating_image", progress=95, message="正在生成信息图文案和 AI 背景")
+    await _set_progress(session, broker, task, stage="generating_image", progress=95, message="正在准备与文章版本一致的信息图")
     await checkpoint(session, task, "image_prompt", lambda: generate_prompt_version(
         session, draft, settings, visual_style="克制的知识编辑插画", aspect_ratio="3:4"
     ), encode=lambda value: {"image_id": value.id})
@@ -31,10 +31,26 @@ async def produce_task_images(session, broker, task, draft, settings):
         ImageVersion.image_draft_id == image_draft.id, ImageVersion.version == image_draft.current_version))
     if current.copy_state.get("article_version") != draft.current_version:
         raise ValueError("信息图对应的文章版本已变化，请重新生成当前文章的信息图")
+    runtime = await configured_settings_copy(session, settings)
+    if runtime.ai_provider_mode == 'mock' or (current.content_json.get('opinion_survey') and current.content_json.get('visual_format') != 'editorial'):
+        if runtime.ai_provider_mode == 'mock':
+            current.content_json = {**current.content_json, 'mock_preview': True}
+            await session.commit()
+        await _set_progress(session, broker, task, stage="rendering_image", progress=98, message="正在渲染配图预览")
+        await checkpoint(session, task, "image_render", lambda: render_image_workspace(session, image_draft, settings),
+                         encode=lambda value: {"image_id": value.id, "version": value.current_version})
+        await session.refresh(current)
+        if current.render_status != 'rendered':
+            raise ValueError('观点统计图尚未完成渲染')
+        resolve_rendered_path(current)
+        task.result = {**task.result, "images_complete": True, "image_id": image_draft.id,
+                       "image_article_version": draft.current_version}
+        draft.analysis_snapshot = {**draft.analysis_snapshot, "image_article_version": draft.current_version}
+        await session.commit()
+        return
     current.workflow_mode = "codex_cli"
     current.content_json = {**current.content_json, "auto_fit": True}
     await session.commit()
-    runtime = await configured_settings_copy(session, settings)
     folder = REPOSITORY_ROOT / "data" / "generated" / task.id
     async def generate_background():
         try:

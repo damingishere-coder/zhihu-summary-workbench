@@ -21,6 +21,12 @@ QUALITY_SYSTEM_PROMPT = """你是回答质量筛选器。请批量判断每条�
 内容质量和信息密度。不得因为立场不同而排除回答；短、广告、重复或明显无关内容应排除。
 必须为每个输入 answer_id 返回且只返回一条结果。"""
 
+SURVEY_QUALITY_INSTRUCTION = """当前任务是统计答主观点，以下规则优先于旧模板中的质量筛选要求：
+只排除广告、没有可理解内容或明显无关的回答。只要表达与问题相关的态度、解释或个人经历就应 include=true，
+不得因为篇幅短、缺少论据、事实未经证实、情绪化、反讽或与其他答主观点相同而排除。
+质量分数与是否纳入观点统计分离；统计的是答主说了什么，不是验证他说得对不对。
+不同 answer_id 即使内容相同也分别保留。必须逐条说明纳入/排除理由。"""
+
 CLAIM_SYSTEM_PROMPT = """你是回答观点提取器。只基于输入回答提取观点，不补充外部事实。
 区分观点、理由、例子、证据、适用条件和风险；不得把个人经历改写为普遍事实。
 每条结果必须保留原 answer_id。"""
@@ -191,6 +197,8 @@ class ArticleGenerationService:
         opinion_map: dict[str, Any],
         clusters: list[dict[str, Any]],
         target_length: int,
+        survey: dict[str, Any] | None = None,
+        source_answers: dict[str, Any] | None = None,
     ) -> StructuredProviderResult[ArticleGeneration]:
         return await self.provider.generate_structured(
             system_prompt=self.system_prompt,
@@ -201,6 +209,8 @@ class ArticleGenerationService:
                     "opinion_map": opinion_map,
                     "clusters": clusters,
                     "target_length": target_length,
+                    "survey": survey,
+                    "source_answers": source_answers,
                 },
                 ensure_ascii=False,
             ),

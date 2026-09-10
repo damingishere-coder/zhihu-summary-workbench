@@ -306,8 +306,8 @@ def clean_answer_html(content: str) -> tuple[str, str, dict[str, list[str]]]:
 
 def basic_filter_reason(plain_content: str) -> str:
     compact = re.sub(r"\s+", "", plain_content)
-    if len(compact) < 40:
-        return "内容过短"
+    if not compact:
+        return "内容为空"
     if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", compact):
         return "仅包含表情或符号"
     advertisement_markers = ("加微信", "扫码咨询", "私信领取", "点击购买")

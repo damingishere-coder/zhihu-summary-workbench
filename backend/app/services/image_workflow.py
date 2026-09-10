@@ -17,7 +17,7 @@ from backend.app.ai.services.content import (
 )
 from backend.app.core.config import REPOSITORY_ROOT, Settings
 from backend.app.models.content import ClaimCluster, OpinionMap
-from backend.app.models.core import ArticleDraft
+from backend.app.models.core import ArticleDraft, ArticleVersion
 from backend.app.models.media import ImageDraft, ImageTemplate, ImageVersion
 from backend.app.schemas.analysis import OpinionMapData
 from backend.app.schemas.image import (
@@ -266,6 +266,30 @@ async def generate_infographic_content_version(
     template_type: str,
     canvas_size: str,
 ) -> ImageWorkspaceRead:
+    article_version = await session.scalar(select(ArticleVersion).where(
+        ArticleVersion.draft_id == draft.id, ArticleVersion.version == draft.current_version))
+    frozen = (article_version.source_snapshot or {}) if article_version else {}
+    survey = frozen.get("opinion_survey")
+    if survey:
+        # Statistical labels and values come from the article snapshot, never a model.
+        image_draft = await get_image_workspace(session, draft.id, create=True)
+        assert image_draft is not None
+        current = await _current_version(session, image_draft)
+        content = InfographicContentData(
+            title=draft.title[:48],
+            one_line_conclusion=f"{survey['collected_answers']}条回答里的共同线索",
+            source_cluster_ids=[row['cluster_id'] for row in survey['rows'][:16]],
+            source_answer_ids=list(frozen.get('answers', {}))[:100],
+        ).model_dump(mode='json')
+        content.update(opinion_survey=survey, question_title=draft.title,
+                       visual_format='focused_statistics')
+        image_draft.status = "content_ready"
+        await _append_version(session, image_draft,
+            content_json=_editor_defaults(content, template_type=template_type, canvas_size=canvas_size),
+            copy_state={"article_version": draft.current_version},
+            prompt_zh='', prompt_en='', background_path=None, thumbnail_path=None)
+        await session.commit()
+        return await workspace_to_read(session, image_draft)
     opinion = await session.scalar(
         select(OpinionMap)
         .where(OpinionMap.question_id == draft.question_id)
@@ -349,7 +373,10 @@ async def generate_prompt_version(
     current = (
         await _current_version(session, image_draft) if image_draft else None
     )
-    if not current or not current.content_json.get("title"):
+    if (not current or not current.content_json.get("title") or
+        (draft.analysis_snapshot.get('opinion_survey') and
+         (not current.content_json.get('opinion_survey') or
+          current.copy_state.get('article_version') != draft.current_version))):
         await generate_infographic_content_version(
             session,
             draft,
@@ -369,6 +396,13 @@ async def generate_prompt_version(
         visual_style=visual_style,
         aspect_ratio=aspect_ratio,
     )
+    if current.content_json.get('visual_format') == 'editorial':
+        from backend.app.services.editorial_visual import editorial_art_prompt
+        prompt_zh = editorial_art_prompt(current.content_json['title'], draft.content)
+        prompt_en = prompt_zh
+    elif current.content_json.get('visual_format') == 'focused_statistics':
+        prompt_zh = '从文章冻结的作者统计中，按认同人数排序绘制前五项横向条形图。零起点，标注人数、作者占比与观点重叠口径；程序直接绘制，不调用 AI 生图。'
+        prompt_en = prompt_zh
     next_content = {
         **current.content_json,
         "visual_style": visual_style,
@@ -419,6 +453,13 @@ async def update_infographic_version(
             "negative_constraints", []
         ),
     }
+    # Editing layout/copy must not silently drop or replace the frozen statistics.
+    if current.content_json.get('opinion_survey'):
+        content_json['opinion_survey'] = current.content_json['opinion_survey']
+        content_json['question_title'] = current.content_json.get('question_title', '')
+        if current.content_json.get('visual_format') in ('editorial', 'focused_statistics'):
+            content_json['visual_format'] = current.content_json['visual_format']
+            content_json['editorial_article'] = current.content_json.get('editorial_article', '')
     await _append_version(
         session,
         image_draft,

@@ -1,5 +1,15 @@
 export const PROTOCOL_VERSION = 1;
 
+export function collectionStopReason(
+  capture: { reached_end?: boolean; stop_reason?: string },
+  elapsed: number, budget: number, emptyRounds: number,
+) {
+  if (capture.reached_end) return "page_end";
+  if (elapsed >= budget) return "time_budget";
+  if (capture.stop_reason === "no_progress" || emptyRounds >= 3) return "no_progress";
+  return "";
+}
+
 export type BridgeState = {
   connected: boolean;
   zhihuAuth: "authenticated" | "login_required" | "verification_required" | "unknown";

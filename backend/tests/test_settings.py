@@ -62,3 +62,18 @@ async def test_unrelated_setting_can_repair_legacy_inconsistent_quotas(app_clien
     )
     assert response.status_code == 200, response.text
     assert response.json()["request_timeout_seconds"] == 300
+
+
+@pytest.mark.asyncio
+async def test_long_review_timeout_round_trip_and_runtime_limit(app_client) -> None:
+    from backend.app.services.settings import configured_settings_copy
+    from backend.app.core.config import get_settings
+    _, client, _ = app_client
+    response = await client.patch('/api/settings', json={'request_timeout_seconds': 1200})
+    assert response.status_code == 200
+    assert (await client.get('/api/settings')).json()['request_timeout_seconds'] == 1200
+    async with get_session_factory()() as session:
+        runtime = await configured_settings_copy(session, get_settings())
+        assert runtime.codex_timeout_seconds == 1200
+    rejected = await client.patch('/api/settings', json={'request_timeout_seconds': 1801})
+    assert rejected.status_code == 422

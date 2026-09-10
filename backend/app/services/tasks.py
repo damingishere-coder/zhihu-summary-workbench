@@ -500,7 +500,7 @@ async def process_task(
                     "input_hash": input_hash, "counts": fetch_counts, "metadata": {"collector_mode": fetch_result.collector_mode,
                     "warnings": fetch_result.warnings, "capture": fetch_result.capture}}}}
                 await session.commit()
-            if task.payload.get("produce_images") and not task.payload.get("accept_partial") and fetch_counts["included"] < 10 and not fetch_result.capture.get("reached_end"):
+            if task.payload.get("produce_images") and not task.payload.get("accept_partial") and fetch_counts["included"] < 10 and not fetch_result.capture.get("reached_end") and fetch_result.capture.get("stop_reason") != "no_progress":
                 raise PipelinePaused("资料不足：有效回答少于 10 条且尚未确认页面末尾。请继续采集后再生成正式内容")
             if fetch_counts["included"] < 1:
                 raise ValueError("没有采集到可分析的有效回答")

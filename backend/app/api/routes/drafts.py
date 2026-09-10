@@ -136,6 +136,9 @@ async def update_draft(
         raise HTTPException(status_code=404, detail="草稿不存在")
     previous_version = await session.scalar(select(ArticleVersion).where(ArticleVersion.draft_id == draft.id, ArticleVersion.version == draft.current_version))
     values = payload.model_dump(exclude_none=True)
+    from backend.app.services.opinion_survey import article_length
+    if article_length(values.get('title', draft.title), values.get('content', draft.content)) > 500:
+        raise HTTPException(status_code=422, detail='标题与正文合计不能超过500字（不计空白，标点和数字计入）')
     for key, value in values.items():
         setattr(draft, key, value)
     draft.status = "waiting_review"

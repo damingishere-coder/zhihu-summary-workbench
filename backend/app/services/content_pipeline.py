@@ -22,6 +22,7 @@ from backend.app.ai.services.content import (
     CLUSTER_SYSTEM_PROMPT,
     OPINION_MAP_SYSTEM_PROMPT,
     QUALITY_SYSTEM_PROMPT,
+    SURVEY_QUALITY_INSTRUCTION,
     REVIEW_SYSTEM_PROMPT,
     REWRITE_SYSTEM_PROMPT,
     AnswerClaimBatchService,
@@ -32,7 +33,7 @@ from backend.app.ai.services.content import (
     DraftRewriteService,
     OpinionMapGenerationService,
 )
-from backend.app.collectors.zhihu import ZhihuCollector, ZhihuFetchResult
+from backend.app.collectors.zhihu import ZhihuCollector, ZhihuFetchResult, basic_filter_reason
 from backend.app.core.config import Settings
 from backend.app.models.common import utc_now
 from backend.app.models.content import (
@@ -61,6 +62,7 @@ from backend.app.schemas.analysis import (
 )
 from backend.app.services.settings import configured_settings_copy, provider_mode
 from backend.app.services.prompts import get_active_prompt
+from backend.app.services.analysis_batches import persist_analysis_batch
 
 
 async def record_model_usage(
@@ -147,21 +149,12 @@ async def fetch_and_store_answers(
     existing_by_external = {
         item.answer_external_id: item for item in existing_answers
     }
-    seen_hashes = {
-        item.content_hash
-        for item in existing_answers
-        if item.content_hash
-    }
     created = 0
     updated = 0
     for incoming in result.answers:
         answer = existing_by_external.get(incoming.external_id)
-        duplicate_reason = ""
-        if incoming.content_hash in seen_hashes and (
-            not answer or answer.content_hash != incoming.content_hash
-        ):
-            duplicate_reason = "内容哈希重复"
-        filter_reason = incoming.filter_reason or duplicate_reason
+        # Identical text from different answers still represents different authors.
+        filter_reason = basic_filter_reason(incoming.plain_content)
         values = {
             "author_name": incoming.author_name,
             "author_url": incoming.author_url,
@@ -216,7 +209,6 @@ async def fetch_and_store_answers(
                     raw_snapshot=incoming.raw_snapshot,
                 )
             )
-        seen_hashes.add(incoming.content_hash)
 
     question.status = "cleaning_answers"
     await session.commit()
@@ -289,7 +281,7 @@ async def evaluate_answers(
         provider,
         await get_active_prompt(
             session, "answer_quality_evaluation", QUALITY_SYSTEM_PROMPT
-        ),
+        ) + "\n" + SURVEY_QUALITY_INSTRUCTION,
     )
     answers = (
         await session.scalars(
@@ -298,6 +290,11 @@ async def evaluate_answers(
             .order_by(Answer.sort_order)
         )
     ).all()
+    # Re-evaluate previous automatic exclusions under the survey criteria, while
+    # retaining explicit manual exclusions. Old quality reasons are not permanent.
+    for item in answers:
+        if item.filter_reason != "运营人员手动排除":
+            item.filter_reason = basic_filter_reason(item.plain_content)
     candidates = [item for item in answers if not item.filter_reason]
     batch_size = max(1, settings.answer_quality_batch_size)
     returned_ids: set[str] = set()
@@ -330,8 +327,7 @@ async def evaluate_answers(
                 continue
             returned_ids.add(answer.id)
             answer.included_for_analysis = quality.include
-            if not quality.include:
-                answer.filter_reason = quality.reason
+            answer.filter_reason = "" if quality.include else quality.reason
             analysis = await session.scalar(
                 select(AnswerAnalysis).where(AnswerAnalysis.answer_id == answer.id)
             )
@@ -343,6 +339,8 @@ async def evaluate_answers(
             analysis.information_density = quality.information_density
             analysis.include = quality.include
             analysis.reason = quality.reason
+        await persist_analysis_batch(session, task=task, stage="evaluating_answers",
+            completed=offset + len(batch), total=len(candidates), start_progress=30, end_progress=40)
     for answer in answers:
         if answer.filter_reason and answer.id not in returned_ids:
             answer.included_for_analysis = False
@@ -465,6 +463,8 @@ async def extract_claims(
                     await session.flush()
                     reusable[(answer.id, content_hash)] = claim
                 kept_ids.add(claim.id)
+        await persist_analysis_batch(session, task=task, stage="extracting_claims",
+            completed=offset + len(batch), total=len(answers), start_progress=42, end_progress=54)
     for claim in existing_claims:
         if claim.id not in kept_ids:
             await session.delete(claim)
@@ -618,6 +618,8 @@ async def refine_clusters(
         for index, members in enumerate(rough)
     ]
     service.system_prompt += "\n输入每项为独立观点，可以合并或保持独立。每个索引必须且只能分配一次，不得漏掉少数派。source_relations 数组必须对每个 source_cluster_index 标明其相对本簇中心结论的 relation：supports/opposes/conditional/related；来源数不是支持票数。"
+    service.system_prompt += "\n当前用途是向普通读者展示几类主要观点各有多少作者。按语义相近的观点方向归组，而非逐句生成小标题：措辞不同、不同例子、不同时间或人群条件可以属于同一观点方向，用 conditional/related 区分，保留少数派与反对者。通常将一批观点归为 8-12 个可比较方向（内容很少时可以更少，确有必要时可更多），不要把几十条输入原样拆成几十个单条簇。标题写清共同核心判断，summary 说明共同核心和各来源的条件差异，不能让每人看起来都支持同组全部细节；source_relations 相对于标题的核心判断。相同作者的补充理由尽量放在所属方向中，不单独作为统计大类。"
+    service.system_prompt += "\n每个统计方向只包含一个可独立认同或反对的核心判断。可独立成立的乐观判断和风险判断分别设类，例如‘出海提供增长空间’和‘海外扩张受到约束’，不能用‘但/同时/以及’拼为复合命题后统一统计支持人数。"
     refined_items = []
     for start in range(0, len(rough_payload), 64):
         batch = rough_payload[start:start + 64]
@@ -629,6 +631,22 @@ async def refine_clusters(
         refined_items.extend(result.data.clusters)
         await record_model_usage(session, result.usage, question_id=question.id,
                                  task_id=task.id if task else None, stage="refining_clusters")
+        await persist_analysis_batch(session, task=task, stage="refining_clusters",
+            completed=start + len(batch), total=len(rough_payload), start_progress=70, end_progress=74,
+            unit="条观点")
+    if len(rough_payload) > 64:
+        from backend.app.services.cluster_batches import GLOBAL_MERGE_INSTRUCTION, flatten_cluster_groups
+        global_service = ClusterRefinementService(provider, service.system_prompt + "\n" + GLOBAL_MERGE_INSTRUCTION)
+        merged = await global_service.refine(question_title=question.title, rough_clusters=[
+            {"index": i, "claims": [item.name, item.summary], "claim_ids": [], "answer_ids": []}
+            for i, item in enumerate(refined_items)
+        ])
+        initial_count = len(refined_items)
+        refined_items = flatten_cluster_groups(refined_items, merged.data.clusters, set(range(len(rough_payload))))
+        await record_model_usage(session, merged.usage, question_id=question.id,
+                                 task_id=task.id if task else None, stage="merging_cluster_batches")
+        await persist_analysis_batch(session, task=task, stage="merging_cluster_batches",
+            completed=initial_count, total=initial_count, start_progress=74, end_progress=76, unit="个方向")
     old_clusters = (
         await session.scalars(
             select(ClaimCluster).where(ClaimCluster.question_id == question.id)
@@ -669,7 +687,8 @@ async def refine_clusters(
             relation = relation_map.get(item["index"], "related")
             for answer_id in item["answer_ids"]:
                 relations[answer_id].add(relation)
-        answer_relations = {key: next(iter(value)) if len(value) == 1 else "conditional" for key, value in relations.items()}
+        from backend.app.services.opinion_survey import combined_relation
+        answer_relations = {key: combined_relation(value) for key, value in relations.items()}
         cluster = ClaimCluster(
             question_id=question.id,
             name=refined.name,
@@ -766,6 +785,8 @@ async def cluster_rows(
                 "source_count": len(source_relations),
                 "opposition_count": sum(value == "opposes" for value in source_relations.values()),
                 "source_relations": source_relations,
+                "source_evidence_quotes": metadata.get("source_evidence_quotes", {}),
+                "stance_matrix_answers": metadata.get("stance_matrix_answers", 0),
                 "opposing_reasons": cluster.opposing_reasons or [],
                 "applicable_conditions": cluster.applicable_conditions or [],
                 "is_mainstream": cluster.is_mainstream,
@@ -868,6 +889,8 @@ async def generate_opinion_map(
     *,
     task: TaskJob | None = None,
 ) -> OpinionMap:
+    from backend.app.services.survey_stances import ensure_survey_stances
+    await ensure_survey_stances(session, question, settings, task=task)
     provider, _ = await _runtime_provider(session, settings)
     clusters = [
         item
@@ -928,6 +951,11 @@ async def generate_article(
     task: TaskJob | None = None,
     feedback: list[str] | None = None,
 ) -> tuple[ArticleDraft, ArticleGeneration]:
+    if feedback is None and task:
+        feedback = task.result.get('survey_review_feedback')
+    from backend.app.services.opinion_survey import build_survey, finalize_short_article, SURVEY_INSTRUCTION
+    from backend.app.services.survey_stances import ensure_survey_stances
+    await ensure_survey_stances(session, question, settings, task=task)
     opinion = await session.scalar(
         select(OpinionMap)
         .where(OpinionMap.question_id == question.id)
@@ -947,8 +975,15 @@ async def generate_article(
             item["sort_order"],
         )
     )
-    request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters,
-        "feedback": feedback, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
+    snapshot_answers = list((await session.scalars(select(Answer).where(Answer.question_id == question.id))).all())
+    survey = build_survey([
+        {"id": a.id, "author_url": a.author_url, "author_name": a.author_name,
+         "answer_url": a.answer_url, "included_for_analysis": a.included_for_analysis}
+        for a in snapshot_answers
+    ], clusters)
+    request_hash = hashlib.sha256(json.dumps({"opinion": opinion.content_json, "clusters": clusters, "survey": survey,
+        "source_hashes": {a.id: a.content_hash for a in snapshot_answers},
+        "feedback": feedback, "editorial_instruction": SURVEY_INSTRUCTION, "input_hash": task.result.get("checkpoints", {}).get("fetch", {}).get("input_hash") if task else None},
         ensure_ascii=False, sort_keys=True).encode()).hexdigest()
     if task:
         existing = await session.scalar(select(ArticleVersion).where(ArticleVersion.source_task_id == task.id)
@@ -963,12 +998,15 @@ async def generate_article(
     result = await ArticleGenerationService(
         provider,
         await get_active_prompt(session, "article_generation", ARTICLE_SYSTEM_PROMPT)
+        + "\n以下为当前产品的写作要求，优先于旧模板中的‘直接回答问题’：\n" + SURVEY_INSTRUCTION
         + ("\n修正以下独立审核问题，仍只可使用已有来源：" + json.dumps(feedback, ensure_ascii=False) if feedback else ""),
     ).generate(
         question_title=question.title,
         opinion_map=opinion.content_json,
         clusters=clusters,
-        target_length=settings.article_target_length,
+        target_length=min(settings.article_target_length, 380),
+        survey=survey,
+        source_answers={a.id: {"author_url": a.author_url, "content": a.plain_content} for a in snapshot_answers},
     )
     await record_model_usage(
         session,
@@ -977,17 +1015,8 @@ async def generate_article(
         task_id=task.id if task else None,
         stage="generating_article",
     )
+    result.data = finalize_short_article(result.data, survey)
     capture = task.result.get("checkpoints", {}).get("fetch", {}).get("metadata", {}).get("capture", {}) if task else {}
-    if capture:
-        from backend.app.schemas.analysis import ArticleParagraph
-        count = capture.get("collected_answer_count", 0)
-        coverage = f"采集范围：本次读取并保存 {count} 条可访问回答。"
-        coverage += "已观察到页面末尾，仍可能存在不可访问或后续新增的回答。" if capture.get("reached_end") else "未确认读取全部回答，以下总结仅代表已采集样本。"
-        reason = {"time_budget": "达到 30 分钟采集预算", "no_progress": "页面未继续加载", "answer_limit": "达到采样数量"}.get(capture.get("stop_reason"))
-        if reason:
-            coverage += f"停止原因：{reason}。"
-        result.data.content += "\n\n> " + coverage
-        result.data.paragraphs.append(ArticleParagraph(paragraph_id="capture_scope", kind="disclosure", content=coverage))
     draft = await session.scalar(
         select(ArticleDraft)
         .where(ArticleDraft.question_id == question.id)
@@ -1003,6 +1032,8 @@ async def generate_article(
             "opinion_map_version": opinion.version,
             "answer_count": len(opinion.content_json.get("source_answer_ids", [])),
             "cluster_count": len(clusters),
+            "opinion_survey": survey,
+            "capture": capture,
         }
         draft.status = "waiting_review"
         draft.review_result = {}
@@ -1021,6 +1052,8 @@ async def generate_article(
                     opinion.content_json.get("source_answer_ids", [])
                 ),
                 "cluster_count": len(clusters),
+                "opinion_survey": survey,
+                "capture": capture,
             },
             review_result={},
         )
@@ -1033,10 +1066,12 @@ async def generate_article(
         content=draft.content,
         source_task_id=task.id if task else None,
     )
-    snapshot_answers = list((await session.scalars(select(Answer).where(Answer.question_id == question.id))).all())
     version.source_snapshot = {
         "request_hash": request_hash,
+        "opinion_survey": survey,
+        "opinion_map": opinion.content_json,
         "answers": {a.id: {"id": a.id, "author": a.author_name, "url": a.answer_url,
+                            "author_url": a.author_url, "included_for_analysis": a.included_for_analysis,
                             "content": a.plain_content, "hash": a.content_hash} for a in snapshot_answers},
         "clusters": clusters,
         "paragraphs": [p.model_dump(mode="json") for p in result.data.paragraphs],
@@ -1134,12 +1169,16 @@ async def review_article(
         provider,
         await get_active_prompt(
             session, "article_quality_review", REVIEW_SYSTEM_PROMPT
-        ),
+        ) + "\n本稿是500字以内的回答观点短文，完整统计保存在附件。允许只选2至3个核心发现和一个关键分歧，"
+        "不要求逐项覆盖全部观点、列作者名单或在正文补统计表。核对实际采用的观点是否忠于来源、数字是否对应opinion_survey、"
+        "是否夸大共识；不要要求补写外部行业事实。未归类不等于反对。",
     ).review(
         question_title=question.title,
         article={
             "title": draft.title,
             "content": draft.content,
+            "opinion_survey": version.source_snapshot.get("opinion_survey"),
+            "source_answers": version.source_snapshot.get("answers", {}),
             "paragraphs": [
                 {"paragraph_id": key, **value} for key, value in grouped.items()
             ],
@@ -1157,6 +1196,9 @@ async def review_article(
     known_answers = set(snapshot.get("answers", {}))
     known_clusters = {item["id"] for item in snapshot.get("clusters", [])}
     source_issues = []
+    from backend.app.services.opinion_survey import article_length
+    if article_length(draft.title, draft.content) > 500:
+        source_issues.append('标题与正文合计超过500字')
     for paragraph in snapshot.get("paragraphs", []):
         if set(paragraph.get("source_answer_ids", [])) - known_answers or set(paragraph.get("cluster_ids", [])) - known_clusters:
             source_issues.append("文章引用了不属于本次采集的来源")

@@ -1,7 +1,7 @@
 import { collectHotInPage } from "./hot-collector";
 import { inspectZhihuAuth } from "./auth";
 import { collectInPage, type CollectRequest } from "./collector";
-import { PROTOCOL_VERSION, randomNonce, websocketUrl, type BridgeState } from "./protocol";
+import { PROTOCOL_VERSION, randomNonce, websocketUrl, collectionStopReason, type BridgeState } from "./protocol";
 
 type StoredConfig = { workbenchUrl?: string; token?: string; pairingCode?: string; lastBundle?: unknown };
 let socket: WebSocket | null = null;
@@ -173,10 +173,10 @@ async function collectJob(message: Record<string, unknown>) {
           return;
         }
         const answers = result.bundle.answers as Array<{ id: string }>;
-        const capture = result.bundle.capture as { reached_end?: boolean };
+        const capture = result.bundle.capture as { reached_end?: boolean; stop_reason?: string };
         emptyRounds = answers.length ? 0 : emptyRounds + 1;
         const nowElapsed = Math.min(1800, initialElapsed + (Date.now() - started) / 1000);
-        const reason = capture.reached_end ? "page_end" : nowElapsed >= budget ? "time_budget" : emptyRounds >= 3 ? "no_progress" : "";
+        const reason = collectionStopReason(capture, nowElapsed, budget, emptyRounds);
         const ack = await acknowledgedSend({ type: "answer_batch", job_id: jobId, nonce, batch_id: randomNonce(),
           bundle: answers.length ? result.bundle : null, finished: Boolean(reason), stop_reason: reason, elapsed_seconds: nowElapsed });
         for (const answer of answers) known.add(answer.id);
