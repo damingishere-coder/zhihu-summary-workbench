@@ -14,7 +14,8 @@ SURVEY_INSTRUCTION = """本产品输出的是该问题下回答作者的观点�
 人数、占比、分母只能引用 survey，点赞数、来源数和观点条数都不是人数。
 正文从‘## 回答里的共性’开始，再写‘## 主要分歧与少数观点’及‘## 这份样本能说明什么’。
 写清答主们重复表达的观点、理由、相同前提以及相反/有条件的态度，使用‘这些回答认为’等归纳口吻，
-每段关联实际 cluster_ids/source_answer_ids。不得把样本观点写成已经核实的客观事实。
+涉及答主观点的段落关联实际 cluster_ids/source_answer_ids。不得把样本观点写成已经核实的客观事实。
+纯方法、样本局限和AI辅助披露段落使用 kind=disclosure，每段不超过200字；不要给方法说明虚构来源关联。
 采集范围及逐观点人数由程序在正文前统一插入，不要重复生成统计表，不使用虚构数字或未提供的百分比。
 无法识别身份的回答不计入作者人数；未分析/未归类不是反对；允许同一作者持多个观点，占比不必合计100%。
 只说明已采集样本，不宣称代表全体知乎用户。"""
@@ -105,7 +106,7 @@ def survey_paragraphs(survey: dict[str, Any], answer_ids: list[str]) -> list[Art
     n = survey['denominator']
     scope = (f"## 采集与统计范围\n本次保存 {survey['collected_answers']} 条回答，其中 {survey['analyzed_answers']} 条参与观点分析。"
              f"按公开主页去重识别出 {n} 位回答作者，以下占比均以这 {n} 位作者为分母。"
-             f"另有 {survey['unidentified_answers']} 条匿名或身份不明回答不计入人数；{survey['unclassified_authors']} 位作者尚未判定明确态度（仅相关提及或未涉及各统计观点）。"
+             f"另有 {survey['unidentified_answers']} 条匿名或身份不明回答不计入人数；{survey['unclassified_authors']} 位作者尚未判定明确态度（包含未参与分析、仅相关提及或未涉及各统计观点的情况）。"
              f"\n{survey['method']}本统计仅代表已保存样本，不代表全部回答作者。")
     result = [ArticleParagraph(paragraph_id='survey_scope', content=scope, source_answer_ids=answer_ids)]
     for index, row in enumerate(survey['rows']):
