@@ -62,6 +62,7 @@ from backend.app.schemas.analysis import (
 )
 from backend.app.services.settings import configured_settings_copy, provider_mode
 from backend.app.services.prompts import get_active_prompt
+from backend.app.services.analysis_batches import persist_analysis_batch
 
 
 async def record_model_usage(
@@ -338,6 +339,8 @@ async def evaluate_answers(
             analysis.information_density = quality.information_density
             analysis.include = quality.include
             analysis.reason = quality.reason
+        await persist_analysis_batch(session, task=task, stage="evaluating_answers",
+            completed=offset + len(batch), total=len(candidates), start_progress=30, end_progress=40)
     for answer in answers:
         if answer.filter_reason and answer.id not in returned_ids:
             answer.included_for_analysis = False
@@ -460,6 +463,8 @@ async def extract_claims(
                     await session.flush()
                     reusable[(answer.id, content_hash)] = claim
                 kept_ids.add(claim.id)
+        await persist_analysis_batch(session, task=task, stage="extracting_claims",
+            completed=offset + len(batch), total=len(answers), start_progress=42, end_progress=54)
     for claim in existing_claims:
         if claim.id not in kept_ids:
             await session.delete(claim)

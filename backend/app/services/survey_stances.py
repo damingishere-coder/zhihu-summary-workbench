@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 
 from backend.app.models.content import Answer, ClaimCluster, ClusterAnswerLink
+from backend.app.services.analysis_batches import persist_analysis_batch
 
 
 Relation = Literal['supports', 'opposes', 'conditional', 'mixed', 'related', 'not_mentioned']
@@ -89,6 +90,8 @@ async def ensure_survey_stances(session, question, settings, *, task=None):
         matrix.update(validate_matrix(response.data, batch, [c.id for c in clusters]))
         await record_model_usage(session, response.usage, question_id=question.id,
             task_id=task.id if task else None, stage='checking_survey_stances')
+        await persist_analysis_batch(session, task=task, stage='checking_survey_stances',
+            completed=start + len(batch), total=len(payload), start_progress=86, end_progress=90)
     # Apply only after every answer/direction has been checked and validated.
     for cluster in clusters:
         await session.execute(delete(ClusterAnswerLink).where(ClusterAnswerLink.cluster_id == cluster.id))
