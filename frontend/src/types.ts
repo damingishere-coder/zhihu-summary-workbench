@@ -263,6 +263,7 @@ export interface ImageVersion {
     background_position_x?: number;
     background_position_y?: number;
     background_scale?: number;
+    opinion_survey?: Record<string, unknown>;
   };
   prompt_zh: string;
   prompt_en: string;

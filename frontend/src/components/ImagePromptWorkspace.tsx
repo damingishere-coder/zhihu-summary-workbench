@@ -134,6 +134,8 @@ function InfographicPreview({
   footer,
   backgroundUrl,
   cssMode,
+  survey = false,
+  renderedUrl,
 }: {
   content: InfographicContent;
   template: "knowledge_card" | "comparison_table";
@@ -142,7 +144,18 @@ function InfographicPreview({
   footer: string;
   backgroundUrl: string | null;
   cssMode: boolean;
+  survey?: boolean;
+  renderedUrl?: string | null;
 }) {
+  if (survey) {
+    return renderedUrl ? (
+      <figure style={{ margin: 0 }} aria-label="观点统计图预览">
+        <img src={renderedUrl} alt="按回答作者统计的观点分布图"
+          style={{ display: "block", width: "100%", height: "auto", borderRadius: 12 }} />
+        <figcaption>当前文章版本的统计图，预览与下载 PNG 一致。</figcaption>
+      </figure>
+    ) : <p role="status">观点统计图尚未渲染，完成后在这里显示。</p>;
+  }
   return (
     <div
       className={`infographic-preview infographic-preview--${template}`}
@@ -433,12 +446,12 @@ export function ImagePromptWorkspace({
       <div className="section-heading">
         <div>
           <h2>配图</h2>
-          <p>检查成图与文案，也可以替换背景或调整版式。</p>
+          <p>{current?.content_json.opinion_survey ? "核对各观点人数、占比和统计范围。" : "检查成图与文案，也可以替换背景或调整版式。"}</p>
         </div>
         {workspace && <Tag color="blue">v{workspace.current_version}</Tag>}
       </div>
       <p className="image-workflow-note">
-        今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。
+        {current?.content_json.opinion_survey ? "图中人数来自当前文章的统计快照；修改观点归类后，需要重新生成文章和统计图。" : "今日计划自动生成配图；需要调整时，可编辑文案、替换背景，再生成 PNG。"}
       </p>
       {query.isLoading && <p role="status">正在读取配图…</p>}
       {query.isError && (
@@ -495,10 +508,12 @@ export function ImagePromptWorkspace({
               footer={footer}
               backgroundUrl={current.thumbnail_url ?? current.background_url}
               cssMode={workspace?.use_css_background ?? true}
+              survey={Boolean(current.content_json.opinion_survey)}
+              renderedUrl={current.rendered_url}
             />
             <div className="image-workspace-summary">
               <span>
-                {template === "knowledge_card" ? "知识总结卡" : "观点对比表"}
+                {current.content_json.opinion_survey ? "作者观点统计图" : template === "knowledge_card" ? "知识总结卡" : "观点对比表"}
               </span>
               <span>{contentCount} 个内容点</span>
               <Tag
@@ -956,6 +971,8 @@ export function ImagePromptWorkspace({
                   footer={footer}
                   backgroundUrl={current.background_url}
                   cssMode={workspace.use_css_background}
+                  survey={Boolean(current.content_json.opinion_survey)}
+                  renderedUrl={current.rendered_url}
                 />
                 {current.render_log.length > 0 && (
                   <Alert
