@@ -82,6 +82,7 @@ async def ensure_survey_stances(session, question, settings, *, task=None):
         return
     provider, _ = await _runtime_provider(session, settings)
     matrix = {}
+    progress_start, progress_end = (78, 83) if task and task.stage == 'generating_opinion_map' else (86, 90)
     for start in range(0, len(payload), 20):
         batch = payload[start:start + 20]
         response = await provider.generate_structured(system_prompt=PROMPT,
@@ -91,7 +92,7 @@ async def ensure_survey_stances(session, question, settings, *, task=None):
         await record_model_usage(session, response.usage, question_id=question.id,
             task_id=task.id if task else None, stage='checking_survey_stances')
         await persist_analysis_batch(session, task=task, stage='checking_survey_stances',
-            completed=start + len(batch), total=len(payload), start_progress=86, end_progress=90)
+            completed=start + len(batch), total=len(payload), start_progress=progress_start, end_progress=progress_end)
     # Apply only after every answer/direction has been checked and validated.
     for cluster in clusters:
         await session.execute(delete(ClusterAnswerLink).where(ClusterAnswerLink.cluster_id == cluster.id))

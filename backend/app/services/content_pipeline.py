@@ -631,6 +631,22 @@ async def refine_clusters(
         refined_items.extend(result.data.clusters)
         await record_model_usage(session, result.usage, question_id=question.id,
                                  task_id=task.id if task else None, stage="refining_clusters")
+        await persist_analysis_batch(session, task=task, stage="refining_clusters",
+            completed=start + len(batch), total=len(rough_payload), start_progress=70, end_progress=74,
+            unit="条观点")
+    if len(rough_payload) > 64:
+        from backend.app.services.cluster_batches import GLOBAL_MERGE_INSTRUCTION, flatten_cluster_groups
+        global_service = ClusterRefinementService(provider, service.system_prompt + "\n" + GLOBAL_MERGE_INSTRUCTION)
+        merged = await global_service.refine(question_title=question.title, rough_clusters=[
+            {"index": i, "claims": [item.name, item.summary], "claim_ids": [], "answer_ids": []}
+            for i, item in enumerate(refined_items)
+        ])
+        initial_count = len(refined_items)
+        refined_items = flatten_cluster_groups(refined_items, merged.data.clusters, set(range(len(rough_payload))))
+        await record_model_usage(session, merged.usage, question_id=question.id,
+                                 task_id=task.id if task else None, stage="merging_cluster_batches")
+        await persist_analysis_batch(session, task=task, stage="merging_cluster_batches",
+            completed=initial_count, total=initial_count, start_progress=74, end_progress=76, unit="个方向")
     old_clusters = (
         await session.scalars(
             select(ClaimCluster).where(ClaimCluster.question_id == question.id)
@@ -873,6 +889,8 @@ async def generate_opinion_map(
     *,
     task: TaskJob | None = None,
 ) -> OpinionMap:
+    from backend.app.services.survey_stances import ensure_survey_stances
+    await ensure_survey_stances(session, question, settings, task=task)
     provider, _ = await _runtime_provider(session, settings)
     clusters = [
         item
