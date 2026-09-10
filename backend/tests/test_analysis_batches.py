@@ -9,16 +9,18 @@ from backend.app.models.content import AnswerAnalysis, Claim
 from backend.app.ai.services.content import AnswerQualityService, AnswerClaimBatchService
 from backend.app.schemas.analysis import FetchAnswersRequest
 from backend.app.services.content_pipeline import evaluate_answers, extract_claims, fetch_and_store_answers
+from backend.app.services.checkpoints import PipelinePaused
 from backend.tests.test_task_flow import FakeZhihuCollector
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize('failure_mode', ['model_error', 'pause'])
 @pytest.mark.parametrize('stage,service,method,run', [
     ('evaluating_answers', AnswerQualityService, 'evaluate_batch', evaluate_answers),
     ('extracting_claims', AnswerClaimBatchService, 'extract_batch', extract_claims),
 ])
 async def test_completed_batch_is_durable_and_unlocks_database_before_next_request(
-    tmp_path, monkeypatch, stage, service, method, run,
+    tmp_path, monkeypatch, stage, service, method, run, failure_mode,
 ):
     engine = create_async_engine(f'sqlite+aiosqlite:///{(tmp_path / "batches.db").as_posix()}',
                                  connect_args={'timeout': .1})
@@ -53,11 +55,16 @@ async def test_completed_batch_is_durable_and_unlocks_database_before_next_reque
                         observer.add(SystemSetting(key='concurrent-write', value='available'))
                         await observer.commit()
                     raise RuntimeError('second batch failed')
-                return await original(self, **kwargs)
+                response = await original(self, **kwargs)
+                if failure_mode == 'pause':
+                    task.payload = {**task.payload, 'pause_requested': True}
+                return response
 
             monkeypatch.setattr(service, method, fail_second_batch)
-            with pytest.raises(RuntimeError, match='second batch failed'):
+            expected_error = PipelinePaused if failure_mode == 'pause' else RuntimeError
+            with pytest.raises(expected_error):
                 await run(session, question, settings, task=task)
+            assert calls == (1 if failure_mode == 'pause' else 2)
             await session.rollback()
 
         async with factory() as session:
@@ -67,8 +74,11 @@ async def test_completed_batch_is_durable_and_unlocks_database_before_next_reque
             if stage == 'extracting_claims':
                 assert await session.scalar(select(func.count(Claim.id))) > 0
             monkeypatch.setattr(service, method, original)
+            resumed_task = await session.get(TaskJob, task_id)
+            resumed_task.payload = {**resumed_task.payload, 'pause_requested': False}
+            await session.commit()
             await run(session, await session.get(Question, question_id), settings,
-                      task=await session.get(TaskJob, task_id))
+                      task=resumed_task)
             assert await session.scalar(select(func.count(AnswerAnalysis.id))) == 4
             assert await session.scalar(select(func.count(ModelUsageLog.id)).where(ModelUsageLog.cache_hit.is_(True))) == 1
     finally:

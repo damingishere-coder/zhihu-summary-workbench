@@ -399,11 +399,15 @@ export function QuestionDetailPage() {
               <StatusTag status={task.status} />
               <Progress percent={task.progress} />
               <p>
-                已采集{" "}
-                {task.result.capture?.collected_answer_count ??
-                  answersQuery.data?.total ??
+                已保存{" "}
+                {answersQuery.data?.total ??
+                  task.result.capture?.collected_answer_count ??
                   "未知数量的"}{" "}
                 条回答。
+                {typeof task.result.capture?.collected_answer_count === "number" &&
+                  answersQuery.data?.total !== undefined &&
+                  answersQuery.data.total !== task.result.capture.collected_answer_count &&
+                  `本次刷新读取 ${task.result.capture.collected_answer_count} 条，其余为此前已保存资料。`}
                 {task.result.capture?.stop_reason === "no_progress"
                   ? "连续回滑未出现新回答，已按本次可获取的最多回答完成采集。平台标注数量可能仍有差额。"
                   : "仅代表当前已保存的资料，不等于读取全部回答。"}

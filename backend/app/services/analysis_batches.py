@@ -1,5 +1,6 @@
 """Persist completed model batches before waiting on another model request."""
 from backend.app.models.core import TaskLog
+from backend.app.services.checkpoints import PipelinePaused
 
 
 async def persist_analysis_batch(session, *, task, stage, completed, total,
@@ -16,3 +17,7 @@ async def persist_analysis_batch(session, *, task, stage, completed, total,
     # Include validated responses, usage and analysis in the same durable batch.
     # In particular, do not hold SQLite's write lock while awaiting the next call.
     await session.commit()
+    if task is not None:
+        await session.refresh(task, ["payload"])
+        if (task.payload or {}).get("pause_requested"):
+            raise PipelinePaused("已保存当前批次并暂停；点击继续可复用已保存结果")
