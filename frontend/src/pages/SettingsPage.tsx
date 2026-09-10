@@ -113,7 +113,7 @@ export function SettingsPage({
                 <InputNumber min={1} max={20} suffix="个" />
               </Form.Item>
               <Form.Item name="request_timeout_seconds" label="请求超时" rules={[{ required: true }]}>
-                <InputNumber min={5} max={600} suffix="秒" />
+                <InputNumber min={5} max={1800} suffix="秒" />
               </Form.Item>
               <Form.Item name="hot_question_quota" label="热门问题配额" rules={[{ required: true }]}>
                 <InputNumber min={0} max={100} suffix="个" />
